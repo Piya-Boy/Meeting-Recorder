@@ -4,7 +4,7 @@
 > **Product:** Meeting Recorder  
 > **Target:** Windows 11 Desktop  
 > **UI framework:** Rust + egui/eframe  
-> **Design source:** Google Stitch export (`stitch_meeting_recorder_desktop_ui`)  
+> **Design source:** Google Stitch export (removed from the tree; see section 14)  
 > **Status:** Design baseline for HTML-to-egui migration
 
 ---
@@ -556,36 +556,9 @@ The UI migration is considered complete when:
 
 ## 14. Source Files
 
-The source archive is `stitch_meeting_recorder_desktop_ui.zip`.
+The original Stitch export (`stitch_meeting_recorder_desktop_ui`: design system markdown plus ten `code.html` screens) is no longer kept in the working tree. It remains in git history at commit `696e6b8` (`git show 696e6b8:stitch_meeting_recorder_desktop_ui/meeting_recorder_design_system.md`).
 
-```text
-stitch_meeting_recorder_desktop_ui/
-├── meeting_recorder_design_system.md
-├── recorder_split_view/
-│   └── code.html
-├── recordings_recording_library/
-│   └── code.html
-├── transcripts_transcript_management/
-│   └── code.html
-├── transcript_detail_document_viewer/
-│   └── code.html
-├── settings_general/
-│   └── code.html
-├── settings_audio/
-│   └── code.html
-├── settings_transcription/
-│   └── code.html
-├── settings_storage/
-│   └── code.html
-├── settings_appearance/
-│   └── code.html
-└── settings_advanced/
-    └── code.html
-```
-
-> **Note (2026-11-24):** the ten `code.html` exports were removed from the working tree after the migration; they remain in git history at commit `696e6b8`. Only `meeting_recorder_design_system.md` is kept in `stitch_meeting_recorder_desktop_ui/`.
-
-This specification is derived from the supplied Stitch design system and the ten HTML screen exports. When a screen's exact control behavior differs from this summary, inspect its source HTML and preserve the source behavior unless the product requirements explicitly override it.
+This specification was derived from that design system and the ten HTML screen exports. The egui implementation is now the source of truth for screen behavior.
 
 ## 15. Implementation Status and Intentional Deviations
 
