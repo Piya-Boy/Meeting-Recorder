@@ -583,6 +583,8 @@ stitch_meeting_recorder_desktop_ui/
     └── code.html
 ```
 
+> **Note (2026-11-24):** the ten `code.html` exports were removed from the working tree after the migration; they remain in git history at commit `696e6b8`. Only `meeting_recorder_design_system.md` is kept in `stitch_meeting_recorder_desktop_ui/`.
+
 This specification is derived from the supplied Stitch design system and the ten HTML screen exports. When a screen's exact control behavior differs from this summary, inspect its source HTML and preserve the source behavior unless the product requirements explicitly override it.
 
 ## 15. Implementation Status and Intentional Deviations
