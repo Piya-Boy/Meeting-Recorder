@@ -7,6 +7,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::asr::transcript::{Line, Track};
 use crate::asr::wavread::WavReader;
@@ -159,6 +160,7 @@ pub fn scan(base: &Path) -> Vec<Entry> {
 }
 
 /// The lines of the transcript in `dir`, for the detail page.
+#[allow(dead_code)] // used by the detail page (next task)
 pub fn load_transcript(dir: &Path) -> io::Result<Vec<Line>> {
     let text = fs::read_to_string(dir.join(TRANSCRIPT_JSON))?;
     parse_transcript(&text).ok_or_else(|| {
@@ -192,6 +194,84 @@ pub fn delete_session(base: &Path, dir: &Path) -> io::Result<()> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => Ok(()),
         Err(e) => Err(e),
+    }
+}
+
+/// Days since 1970-01-01 of a `YYYY-MM-DD...` text, for "last 7 days" style filters.
+pub fn day_number(date: &str) -> Option<i64> {
+    let y: i64 = date.get(0..4)?.parse().ok()?;
+    let m: i64 = date.get(5..7)?.parse().ok()?;
+    let d: i64 = date.get(8..10)?.parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Days from civil (Howard Hinnant).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// Runs scans on a short thread so the window never waits for the disk. Only the newest
+/// request's result is ever handed out: a slow old scan cannot overwrite a newer one.
+pub struct LibraryHandle {
+    tx: Sender<(u64, Vec<Entry>)>,
+    rx: Receiver<(u64, Vec<Entry>)>,
+    requested: u64,
+    delivered: u64,
+}
+
+impl Default for LibraryHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LibraryHandle {
+    pub fn new() -> Self {
+        let (tx, rx) = channel();
+        Self {
+            tx,
+            rx,
+            requested: 0,
+            delivered: 0,
+        }
+    }
+
+    /// Starts a scan of `base`.
+    pub fn refresh(&mut self, base: PathBuf) {
+        self.requested += 1;
+        let seq = self.requested;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((seq, scan(&base)));
+        });
+    }
+
+    /// The newest finished scan that was not handed out yet.
+    pub fn poll(&mut self) -> Option<Vec<Entry>> {
+        let mut newest: Option<(u64, Vec<Entry>)> = None;
+        while let Ok((seq, list)) = self.rx.try_recv() {
+            if seq > self.delivered && newest.as_ref().is_none_or(|(n, _)| seq > *n) {
+                newest = Some((seq, list));
+            }
+        }
+        let (seq, list) = newest?;
+        self.delivered = seq;
+        Some(list)
+    }
+
+    /// A scan was started and its result has not arrived.
+    pub fn is_pending(&self) -> bool {
+        self.delivered < self.requested
+    }
+
+    /// How many scans were started (tests).
+    #[cfg(test)]
+    pub fn requested(&self) -> u64 {
+        self.requested
     }
 }
 
@@ -425,6 +505,52 @@ mod tests {
         assert!(delete_session(&base, &nested).is_err());
         assert!(delete_session(&base, &base.join("2026-11-24_1000_x/../..")).is_err());
         assert!(d.join("mic.wav").exists() && nested.join("mic.wav").exists());
+    }
+
+    #[test]
+    fn handle_hands_out_only_the_newest_scan() {
+        let t = Tmp::new();
+        let a = t.dir("a");
+        wav(&t.dir("a/2026-11-24_1000_first").join("mic.wav"), 1);
+        let b = t.dir("b");
+        wav(&t.dir("b/2026-11-24_1001_second").join("mic.wav"), 1);
+        let mut h = LibraryHandle::new();
+        h.refresh(a);
+        h.refresh(b);
+        assert!(h.is_pending());
+        let mut got: Vec<Vec<Entry>> = Vec::new();
+        let start = std::time::Instant::now();
+        while h.is_pending() && start.elapsed().as_secs() < 10 {
+            if let Some(list) = h.poll() {
+                got.push(list);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(list) = h.poll() {
+            got.push(list);
+        }
+        assert!(!h.is_pending());
+        let last = got.last().expect("a result");
+        assert_eq!(last[0].name, "second", "the newest request wins");
+        assert!(h.poll().is_none(), "nothing is handed out twice");
+        assert_eq!(h.requested(), 2);
+    }
+
+    #[test]
+    fn day_number_counts_days() {
+        assert_eq!(day_number("1970-01-01"), Some(0));
+        assert_eq!(day_number("2026-11-24 22:48"), Some(20_781));
+        assert_eq!(
+            day_number("2026-11-24").unwrap() - day_number("2026-11-17").unwrap(),
+            7
+        );
+        assert_eq!(
+            day_number("2026-03-01").unwrap() - day_number("2026-02-28").unwrap(),
+            1
+        );
+        assert_eq!(day_number("my own folder"), None);
+        assert_eq!(day_number("2026-13-01"), None);
     }
 
     #[test]

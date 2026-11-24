@@ -6,8 +6,8 @@ use crate::i18n::tr;
 use egui::Ui;
 
 use crate::screens::{
-    recorder::{draw_recorder_screen, AsrRequest, EngineState, RecorderScreen},
-    recordings::{draw_recordings_screen, RecordingsScreen},
+    recorder::{draw_recorder_screen, AsrJob, AsrRequest, EngineState, RecorderScreen},
+    recordings::{draw_recordings_screen, RecordingsRequest, RecordingsScreen},
     settings::{
         advanced::{draw_settings_advanced, SettingsAdvancedScreen},
         appearance::{draw_settings_appearance, SettingsAppearanceScreen},
@@ -106,7 +106,12 @@ impl Screen {
 pub enum Modal {
     Help,
     About,
-    DeleteRecording { id: usize, name: String },
+    /// `dir` is the session folder; `None` for the preview's sample rows.
+    DeleteRecording {
+        id: usize,
+        name: String,
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 // ─── Application state ───────────────────────────────────────────────────────
@@ -136,6 +141,12 @@ pub struct AppState {
     asr_precision_sent: Precision,
     /// One-shot text for a toast about the model (taken once per frame).
     asr_notice: Option<String>,
+    /// Lists the recordings on disk for the Recordings and Transcripts screens.
+    library: crate::library::LibraryHandle,
+    /// True once the screens show real folders (the capture worker is connected).
+    library_live: bool,
+    /// The screen of the last frame, to refresh the lists when one is opened.
+    last_screen: Screen,
     /// A delete was sent and its answer has not come yet.
     asr_deleting: bool,
 
@@ -167,6 +178,9 @@ impl Default for AppState {
             asr: None,
             asr_precision_sent: Precision::Int8,
             asr_notice: None,
+            library: crate::library::LibraryHandle::new(),
+            library_live: false,
+            last_screen: Screen::default(),
             asr_deleting: false,
             persist: false,
             saved: Persisted::default(),
@@ -204,6 +218,7 @@ impl AppState {
                     "delete" => Some(Modal::DeleteRecording {
                         id: 1,
                         name: "Q4 Engineering Architecture Sync".to_owned(),
+                        dir: None,
                     }),
                     _ => None,
                 };
@@ -332,15 +347,22 @@ impl AppState {
                 total_secs,
                 dir,
             } => self.recorder.asr_progress(&dir, done_secs, total_secs),
-            AsrEvent::Done { dir, transcript } => self.recorder.asr_done(&dir, &transcript),
+            AsrEvent::Done { dir, transcript } => {
+                self.recorder.asr_done(&dir, &transcript);
+                self.refresh_library();
+            }
             AsrEvent::Cancelled { dir } => {
                 self.recorder.asr_cancelled(&dir);
                 self.asr_notice = Some("Transcription cancelled".to_owned());
+                self.refresh_library();
             }
             AsrEvent::Error {
                 dir: Some(dir),
                 message,
-            } => self.recorder.asr_failed(&dir, message),
+            } => {
+                self.recorder.asr_failed(&dir, message);
+                self.refresh_library();
+            }
             AsrEvent::Error { dir: None, message } => self.asr_notice = Some(message),
             // The job waits behind another; the panel keeps showing the running one.
             AsrEvent::Queued { .. } => {}
@@ -430,6 +452,7 @@ impl AppState {
         handle.send(Command::ListDevices);
         self.recorder.audio = Some(handle);
         self.recorder.go_live();
+        self.enable_library();
         // The mock folder belongs to someone else's profile; record under this user's.
         if self.recorder.destination == crate::screens::recorder::MOCK_DESTINATION {
             if let Some(home) = std::env::var_os("USERPROFILE") {
@@ -439,6 +462,113 @@ impl AppState {
                     .join("Recordings")
                     .to_string_lossy()
                     .into_owned();
+            }
+        }
+    }
+
+    /// Makes Recordings and Transcripts list the folders under the Recorder's destination.
+    pub fn enable_library(&mut self) {
+        self.library_live = true;
+        self.recordings.go_live();
+        self.refresh_library();
+    }
+
+    /// Starts a background scan of the destination folder (no-op in preview mode).
+    pub fn refresh_library(&mut self) {
+        if self.library_live {
+            self.library
+                .refresh(std::path::PathBuf::from(&self.recorder.destination));
+        }
+    }
+
+    /// Per frame: refresh when Recordings or Transcripts is opened, take a finished scan,
+    /// show which folder is being transcribed, and run row button requests.
+    fn sync_library(&mut self, ctx: &egui::Context) {
+        if !self.library_live {
+            return;
+        }
+        if self.current_screen != self.last_screen {
+            self.last_screen = self.current_screen;
+            if matches!(
+                self.current_screen,
+                Screen::Recordings | Screen::Transcripts
+            ) {
+                self.refresh_library();
+            }
+        }
+        if let Some(list) = self.library.poll() {
+            self.recordings.set_entries(list);
+        }
+        let processing = match (&self.recorder.asr_job, &self.recorder.transcript_dir) {
+            (AsrJob::Waiting, Some(dir)) => Some((dir.clone(), 0)),
+            (
+                AsrJob::Running {
+                    done_secs,
+                    total_secs,
+                },
+                Some(dir),
+            ) => {
+                let pct = if *total_secs <= 0.0 {
+                    0
+                } else {
+                    (done_secs / total_secs * 100.0).clamp(0.0, 99.0) as u8
+                };
+                Some((dir.clone(), pct))
+            }
+            _ => None,
+        };
+        self.recordings.set_processing(processing);
+        if let Some(request) = self.recordings.request.take() {
+            self.handle_recordings_request(request);
+        }
+        if self.library.is_pending() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    fn handle_recordings_request(&mut self, request: RecordingsRequest) {
+        match request {
+            RecordingsRequest::OpenTranscript(_dir) => {
+                self.current_screen = Screen::TranscriptDetail;
+            }
+            RecordingsRequest::Transcribe(dir) => self.start_transcription(dir),
+            RecordingsRequest::OpenFolder(dir) => open_in_explorer(&dir),
+        }
+    }
+
+    /// Deletes a recording folder. Refused while a recording is in progress or while the folder
+    /// is being transcribed.
+    pub fn delete_recording(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        if self.recorder.state.session_active() {
+            return Err("Stop the recording before deleting.".to_owned());
+        }
+        let busy = matches!(
+            self.recorder.asr_job,
+            AsrJob::Waiting | AsrJob::Running { .. }
+        ) && self.recorder.transcript_dir.as_deref() == Some(dir);
+        if busy {
+            return Err("This recording is being transcribed.".to_owned());
+        }
+        let base = std::path::PathBuf::from(&self.recorder.destination);
+        crate::library::delete_session(&base, dir)
+            .map_err(|e| format!("Could not delete the recording: {e}"))?;
+        self.refresh_library();
+        Ok(())
+    }
+
+    /// Deletes what the delete modal named: a real folder, or a sample row in preview mode.
+    pub fn apply_delete(&mut self, id: usize, dir: Option<std::path::PathBuf>) {
+        match dir {
+            Some(dir) => {
+                if let Err(message) = self.delete_recording(&dir) {
+                    self.asr_notice = Some(message);
+                }
+            }
+            None => {
+                self.recordings.recordings.retain(|r| r.id != id);
+                if self.recordings.playback_id == Some(id) {
+                    self.recordings.playback_id = None;
+                }
             }
         }
     }
@@ -462,6 +592,7 @@ impl AppState {
                     duration,
                 });
                 self.start_transcription(dir);
+                self.refresh_library();
             }
             other => self.recorder.apply_event(other),
         }
@@ -552,6 +683,7 @@ impl eframe::App for AppState {
             crate::toast::show(ctx, notice);
         }
         self.sync_asr();
+        self.sync_library(ctx);
         if let Some(notice) = self.take_asr_notice() {
             crate::toast::show(ctx, crate::i18n::tr(&notice));
         }
@@ -640,11 +772,8 @@ impl eframe::App for AppState {
 
         // "Confirm before deleting recordings" off: delete immediately.
         if !self.settings_general.confirm_delete {
-            if let Some(Modal::DeleteRecording { id, .. }) = self.open_modal.clone() {
-                self.recordings.recordings.retain(|r| r.id != id);
-                if self.recordings.playback_id == Some(id) {
-                    self.recordings.playback_id = None;
-                }
+            if let Some(Modal::DeleteRecording { id, dir, .. }) = self.open_modal.clone() {
+                self.apply_delete(id, dir);
                 self.open_modal = None;
             }
         }
@@ -659,6 +788,11 @@ impl eframe::App for AppState {
         self.draw_focus_ring(ctx, &theme);
         self.save_if_changed();
     }
+}
+
+/// Shows a folder in Windows Explorer.
+fn open_in_explorer(dir: &std::path::Path) {
+    let _ = std::process::Command::new("explorer").arg(dir).spawn();
 }
 
 // ─── Main content area ───────────────────────────────────────────────────────
@@ -1249,5 +1383,126 @@ mod tests {
         pump(&mut state, |s| s.recorder.state == RecorderState::Saved);
         let saved = state.recorder.saved_dir.clone().expect("saved folder");
         assert!(saved.join("system.wav").is_file() && saved.join("mic.wav").is_file());
+    }
+
+    fn library_dir(name: &str) -> std::path::PathBuf {
+        crate::audio::temp_dir(name)
+    }
+
+    fn pump_library(a: &mut AppState, what: &str, done: impl Fn(&AppState) -> bool) {
+        let ctx = egui::Context::default();
+        let t = std::time::Instant::now();
+        while !done(a) {
+            a.sync_library(&ctx);
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn delete_is_refused_while_recording() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-del-rec");
+        let dir = session_dir(&base, "2026-11-24_1000_a");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.recorder.state = RecorderState::Recording;
+        assert!(a.delete_recording(&dir).is_err());
+        assert!(dir.join("mic.wav").is_file(), "nothing was deleted");
+        a.recorder.state = RecorderState::Idle;
+        assert!(a.delete_recording(&dir).is_ok());
+        assert!(!dir.exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_is_refused_while_the_folder_is_transcribing() {
+        let base = library_dir("app-del-job");
+        let busy = session_dir(&base, "2026-11-24_1000_a");
+        let other = session_dir(&base, "2026-11-24_1001_b");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.recorder.asr_job = AsrJob::Running {
+            done_secs: 1.0,
+            total_secs: 10.0,
+        };
+        a.recorder.transcript_dir = Some(busy.clone());
+        assert!(a.delete_recording(&busy).is_err());
+        assert!(busy.join("mic.wav").is_file());
+        assert!(a.delete_recording(&other).is_ok(), "another folder is fine");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn deleting_through_the_modal_path_removes_the_folder_and_the_row() {
+        let base = library_dir("app-del-row");
+        let dir = session_dir(&base, "2026-11-24_1000_a");
+        session_dir(&base, "2026-11-24_1001_b");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.enable_library();
+        pump_library(&mut a, "two rows", |a| a.recordings.recordings.len() == 2);
+        a.apply_delete(1, Some(dir.clone()));
+        assert!(!dir.exists());
+        pump_library(&mut a, "one row", |a| a.recordings.recordings.len() == 1);
+        assert_eq!(a.recordings.recordings[0].display_name, "b");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_failed_delete_is_reported_and_keeps_the_row() {
+        let base = library_dir("app-del-fail");
+        let outside = library_dir("app-del-outside");
+        let dir = session_dir(&outside, "2026-11-24_1000_a");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.apply_delete(1, Some(dir.clone()));
+        assert!(a.take_asr_notice().is_some());
+        assert!(
+            dir.join("mic.wav").is_file(),
+            "outside the destination: untouched"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn the_list_refreshes_when_opened_and_after_a_save() {
+        let base = library_dir("app-refresh");
+        let dir = session_dir(&base, "2026-11-24_1000_a");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        let ctx = egui::Context::default();
+        a.sync_library(&ctx);
+        assert_eq!(a.library.requested(), 0, "preview mode never scans");
+        a.enable_library();
+        assert_eq!(a.library.requested(), 1);
+        a.current_screen = Screen::Recordings;
+        a.sync_library(&ctx);
+        assert_eq!(a.library.requested(), 2, "opening Recordings refreshes");
+        a.sync_library(&ctx);
+        assert_eq!(a.library.requested(), 2, "only once per visit");
+        a.apply_audio_event(saved(&dir));
+        assert_eq!(a.library.requested(), 3, "a saved recording refreshes");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_new_folder_appears_without_restarting() {
+        let base = library_dir("app-newfolder");
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.enable_library();
+        pump_library(&mut a, "first scan", |a| a.recordings.loaded);
+        assert!(a.recordings.recordings.is_empty());
+        session_dir(&base, "2026-11-24_1000_made-in-explorer");
+        a.current_screen = Screen::Recordings;
+        pump_library(&mut a, "the new row", |a| {
+            a.recordings.recordings.len() == 1
+        });
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -42,7 +42,7 @@ impl RecorderState {
     }
 
     /// A session exists (or is being set up or torn down); another Start must not be sent.
-    fn session_active(self) -> bool {
+    pub(crate) fn session_active(self) -> bool {
         matches!(
             self,
             RecorderState::Starting

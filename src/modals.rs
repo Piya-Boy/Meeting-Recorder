@@ -35,8 +35,8 @@ pub fn draw(ctx: &Context, state: &mut AppState, theme: &ThemeColors) {
             match &modal {
                 Modal::Help => help_body(ui, theme, &mut close),
                 Modal::About => about_body(ui, theme, &mut close),
-                Modal::DeleteRecording { id, name } => {
-                    delete_body(ui, theme, state, *id, name, &mut close)
+                Modal::DeleteRecording { id, name, dir } => {
+                    delete_body(ui, theme, state, *id, name, dir.clone(), &mut close)
                 }
             }
         });
@@ -137,6 +137,7 @@ fn delete_body(
     state: &mut AppState,
     id: usize,
     name: &str,
+    dir: Option<std::path::PathBuf>,
     close: &mut bool,
 ) {
     ui.horizontal_top(|ui| {
@@ -183,10 +184,7 @@ fn delete_body(
     footer(ui, |ui| {
         // right-to-left: primary action first
         if custom_button(ui, theme, None, "Delete", ButtonVariant::Danger).clicked() {
-            state.recordings.recordings.retain(|r| r.id != id);
-            if state.recordings.playback_id == Some(id) {
-                state.recordings.playback_id = None;
-            }
+            state.apply_delete(id, dir);
             *close = true;
         }
         if custom_button(ui, theme, None, "Cancel", ButtonVariant::Secondary).clicked() {

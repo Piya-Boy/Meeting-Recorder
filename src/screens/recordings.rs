@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use crate::i18n::tr;
+use crate::library;
 use egui::{Color32, RichText, Ui};
 
 use crate::app::{Modal, Screen};
@@ -19,13 +22,28 @@ pub struct RecordingEntry {
     pub duration: String,
     pub size: String,
     pub status: RecordingStatus,
+    /// The session folder; `None` for the preview's sample rows.
+    pub dir: Option<PathBuf>,
+    /// `YYYY-MM-DD HH:MM` for the date filter and the sort.
+    pub stamp: String,
+    pub duration_s: u64,
+    pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum RecordingStatus {
     Transcribed,
     Processing(u8), // percent
+    #[default]
     AudioOnly,
+}
+
+/// What a row button asks the app to do (taken once per frame).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RecordingsRequest {
+    OpenTranscript(PathBuf),
+    Transcribe(PathBuf),
+    OpenFolder(PathBuf),
 }
 
 impl RecordingStatus {
@@ -48,6 +66,111 @@ pub struct RecordingsScreen {
     pub date_filters: Vec<&'static str>,
     pub sort_options: Vec<&'static str>,
     pub show_empty: bool,
+    /// True once the app lists real folders; false keeps the sample rows (preview mode).
+    pub live: bool,
+    /// False until the first scan arrives in live mode.
+    pub loaded: bool,
+    /// The folder being transcribed and its percent, shown as Processing.
+    pub processing: Option<(PathBuf, u8)>,
+    /// Set by a row button; taken by the app.
+    pub request: Option<RecordingsRequest>,
+    entries: Vec<library::Entry>,
+}
+
+impl RecordingsScreen {
+    /// Switches to real data; the sample rows go.
+    pub fn go_live(&mut self) {
+        self.live = true;
+        self.loaded = false;
+        self.recordings.clear();
+        self.playback_id = None;
+    }
+
+    /// Shows a new scan.
+    pub fn set_entries(&mut self, entries: Vec<library::Entry>) {
+        self.entries = entries;
+        self.loaded = true;
+        self.rebuild_rows();
+    }
+
+    /// The folder whose transcription is running or waiting (with its percent), if any.
+    pub fn set_processing(&mut self, processing: Option<(PathBuf, u8)>) {
+        if self.processing != processing {
+            self.processing = processing;
+            if self.live {
+                self.rebuild_rows();
+            }
+        }
+    }
+
+    fn rebuild_rows(&mut self) {
+        let processing = self.processing.clone();
+        self.recordings = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let status = if e.transcript.is_some() {
+                    RecordingStatus::Transcribed
+                } else if let Some((_, pct)) = processing.as_ref().filter(|(d, _)| *d == e.dir) {
+                    RecordingStatus::Processing(*pct)
+                } else {
+                    RecordingStatus::AudioOnly
+                };
+                RecordingEntry {
+                    id: i + 1,
+                    display_name: e.name.clone(),
+                    file_name: e.folder.clone(),
+                    date: e.stamp.clone(),
+                    duration: library::format_duration(e.duration_s),
+                    size: library::format_size(e.bytes),
+                    status,
+                    dir: Some(e.dir.clone()),
+                    stamp: e.stamp.clone(),
+                    duration_s: e.duration_s,
+                    bytes: e.bytes,
+                }
+            })
+            .collect();
+    }
+
+    /// Indexes into `recordings` that pass the search and date filter, in the chosen order.
+    /// `today` is `YYYY-MM-DD`.
+    pub fn visible(&self, today: &str) -> Vec<usize> {
+        let query = self.search.trim().to_lowercase();
+        let today_n = library::day_number(today);
+        let max_age = match self.date_filter_idx {
+            1 => Some(0),
+            2 => Some(6),
+            3 => Some(29),
+            _ => None,
+        };
+        let mut out: Vec<usize> = self
+            .recordings
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                query.is_empty()
+                    || r.display_name.to_lowercase().contains(&query)
+                    || r.file_name.to_lowercase().contains(&query)
+            })
+            .filter(|(_, r)| match (max_age, today_n) {
+                (Some(max), Some(t)) => {
+                    library::day_number(&r.stamp).is_some_and(|d| d <= t && t - d <= max)
+                }
+                _ => true,
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let rows = &self.recordings;
+        match self.sort_idx {
+            1 => out.sort_by(|&a, &b| rows[a].stamp.cmp(&rows[b].stamp)),
+            2 => out.sort_by(|&a, &b| rows[b].duration_s.cmp(&rows[a].duration_s)),
+            3 => out.sort_by(|&a, &b| rows[b].bytes.cmp(&rows[a].bytes)),
+            _ => out.sort_by(|&a, &b| rows[b].stamp.cmp(&rows[a].stamp)),
+        }
+        out
+    }
 }
 
 impl Default for RecordingsScreen {
@@ -57,6 +180,11 @@ impl Default for RecordingsScreen {
             date_filter_idx: 0,
             sort_idx: 0,
             show_empty: false,
+            live: false,
+            loaded: true,
+            processing: None,
+            request: None,
+            entries: Vec::new(),
             recordings: vec![
                 RecordingEntry {
                     id: 1,
@@ -66,6 +194,10 @@ impl Default for RecordingsScreen {
                     duration: "00:42:18".to_owned(),
                     size: "184.6 MB".to_owned(),
                     status: RecordingStatus::Transcribed,
+                    dir: None,
+                    stamp: "2026-11-23 09:30".to_owned(),
+                    duration_s: 2538,
+                    bytes: 193580000,
                 },
                 RecordingEntry {
                     id: 2,
@@ -75,6 +207,10 @@ impl Default for RecordingsScreen {
                     duration: "01:08:44".to_owned(),
                     size: "301.2 MB".to_owned(),
                     status: RecordingStatus::Transcribed,
+                    dir: None,
+                    stamp: "2026-11-22 14:00".to_owned(),
+                    duration_s: 4124,
+                    bytes: 315800000,
                 },
                 RecordingEntry {
                     id: 3,
@@ -84,6 +220,10 @@ impl Default for RecordingsScreen {
                     duration: "00:19:05".to_owned(),
                     size: "83.4 MB".to_owned(),
                     status: RecordingStatus::Processing(78),
+                    dir: None,
+                    stamp: "2026-11-21 16:15".to_owned(),
+                    duration_s: 1145,
+                    bytes: 87400000,
                 },
                 RecordingEntry {
                     id: 4,
@@ -93,6 +233,10 @@ impl Default for RecordingsScreen {
                     duration: "00:34:52".to_owned(),
                     size: "152.1 MB".to_owned(),
                     status: RecordingStatus::AudioOnly,
+                    dir: None,
+                    stamp: "2026-11-19 11:00".to_owned(),
+                    duration_s: 2092,
+                    bytes: 159500000,
                 },
             ],
             playback_id: Some(1),
@@ -133,7 +277,7 @@ pub fn draw_recordings_screen(
 
     // Playback bar pinned to the bottom (hidden in the empty state).
     let showing_list = !(screen.show_empty || screen.recordings.is_empty());
-    if showing_list && screen.playback_id.is_some() {
+    if showing_list && !screen.live && screen.playback_id.is_some() {
         egui::TopBottomPanel::bottom("recordings_playback")
             .resizable(false)
             .show_separator_line(false)
@@ -156,7 +300,13 @@ pub fn draw_recordings_screen(
             ui.spacing_mut().item_spacing.y = 16.0;
             draw_toolbar(ui, theme, screen);
 
-            if showing_list {
+            if screen.live && !screen.loaded {
+                ui.label(
+                    RichText::new(tr("Loading recordings..."))
+                        .size(13.0)
+                        .color(theme.on_surface_variant),
+                );
+            } else if showing_list {
                 if let Some(target) = draw_recordings_table(ui, theme, screen, open_modal) {
                     navigate = Some(target);
                 }
@@ -267,23 +417,15 @@ fn draw_recordings_table(
     screen: &mut RecordingsScreen,
     open_modal: &mut Option<Modal>,
 ) -> Option<Screen> {
-    let query = screen.search.trim().to_lowercase();
     let mut navigate = None;
-    let mut to_delete: Option<(usize, String)> = None;
+    let mut to_delete: Option<(usize, String, Option<PathBuf>)> = None;
     let mut toggle_play: Option<usize> = None;
     let mut transcribe: Option<usize> = None;
+    let mut request: Option<RecordingsRequest> = None;
+    let live = screen.live;
 
-    let visible: Vec<usize> = screen
-        .recordings
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| {
-            query.is_empty()
-                || r.display_name.to_lowercase().contains(&query)
-                || r.file_name.to_lowercase().contains(&query)
-        })
-        .map(|(i, _)| i)
-        .collect();
+    let today = crate::audio::naming::local_stamp();
+    let visible: Vec<usize> = screen.visible(today.get(..10).unwrap_or(""));
 
     table_frame(ui, theme, |ui| {
         header_row(
@@ -321,7 +463,7 @@ fn draw_recordings_table(
                 let last_idx = visible.len() - 1;
                 for (n, &idx) in visible.iter().enumerate() {
                     let entry = &screen.recordings[idx];
-                    let is_playing = screen.playback_id == Some(entry.id);
+                    let is_playing = !live && screen.playback_id == Some(entry.id);
                     body_row(ui, theme, &COLS, 64.0, is_playing, n == last_idx, |cells| {
                         cells.stack(40.0, |ui| {
                             ui.add(
@@ -353,7 +495,8 @@ fn draw_recordings_table(
                                 .on_hover_text(tr("Delete recording"))
                                 .clicked()
                             {
-                                to_delete = Some((entry.id, entry.display_name.clone()));
+                                to_delete =
+                                    Some((entry.id, entry.display_name.clone(), entry.dir.clone()));
                             }
                             match &entry.status {
                                 RecordingStatus::Transcribed => {
@@ -366,7 +509,14 @@ fn draw_recordings_table(
                                     )
                                     .clicked()
                                     {
-                                        navigate = Some(Screen::TranscriptDetail);
+                                        match &entry.dir {
+                                            Some(dir) if live => {
+                                                request = Some(RecordingsRequest::OpenTranscript(
+                                                    dir.clone(),
+                                                ))
+                                            }
+                                            _ => navigate = Some(Screen::TranscriptDetail),
+                                        }
                                     }
                                 }
                                 RecordingStatus::Processing(_) => {
@@ -395,9 +545,24 @@ fn draw_recordings_table(
                                     )
                                     .clicked()
                                     {
-                                        transcribe = Some(entry.id);
+                                        match &entry.dir {
+                                            Some(dir) if live => {
+                                                request =
+                                                    Some(RecordingsRequest::Transcribe(dir.clone()))
+                                            }
+                                            _ => transcribe = Some(entry.id),
+                                        }
                                     }
                                 }
+                            }
+                            if let (true, Some(dir)) = (live, &entry.dir) {
+                                if icon_button(ui, theme, egui_phosphor::regular::FOLDER_OPEN, 26.0)
+                                    .on_hover_text(tr("Open folder"))
+                                    .clicked()
+                                {
+                                    request = Some(RecordingsRequest::OpenFolder(dir.clone()));
+                                }
+                                return;
                             }
                             let (icon, variant) = if is_playing {
                                 (egui_phosphor::regular::PAUSE, ButtonVariant::Primary)
@@ -414,8 +579,11 @@ fn draw_recordings_table(
             });
     });
 
-    if let Some((id, name)) = to_delete {
-        *open_modal = Some(Modal::DeleteRecording { id, name });
+    if let Some((id, name, dir)) = to_delete {
+        *open_modal = Some(Modal::DeleteRecording { id, name, dir });
+    }
+    if request.is_some() {
+        screen.request = request;
     }
     if let Some(id) = toggle_play {
         screen.playback_id = if screen.playback_id == Some(id) {
@@ -626,4 +794,126 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(
+        folder: &str,
+        stamp: &str,
+        duration_s: u64,
+        bytes: u64,
+        transcribed: bool,
+    ) -> library::Entry {
+        library::Entry {
+            dir: PathBuf::from(format!("C:\\rec\\{folder}")),
+            folder: folder.to_owned(),
+            name: folder.to_owned(),
+            stamp: stamp.to_owned(),
+            duration_s,
+            bytes,
+            transcript: transcribed.then(|| library::TranscriptInfo {
+                lines: 1,
+                preview: "x".into(),
+                text: "x".into(),
+            }),
+        }
+    }
+
+    fn live_screen() -> RecordingsScreen {
+        let mut s = RecordingsScreen::default();
+        s.go_live();
+        s.set_entries(vec![
+            entry("standup", "2026-11-24 09:00", 600, 5_000, true),
+            entry("retro", "2026-11-20 10:00", 3_000, 9_000, false),
+            entry("old-review", "2026-10-01 10:00", 100, 20_000, false),
+            entry("loose", "", 50, 1_000, false),
+        ]);
+        s
+    }
+
+    fn names(s: &RecordingsScreen, idx: Vec<usize>) -> Vec<String> {
+        idx.into_iter()
+            .map(|i| s.recordings[i].display_name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn going_live_drops_the_sample_rows_until_a_scan_arrives() {
+        let mut s = RecordingsScreen::default();
+        assert!(!s.recordings.is_empty() && s.loaded);
+        s.go_live();
+        assert!(s.recordings.is_empty() && !s.loaded);
+        s.set_entries(vec![]);
+        assert!(s.loaded && s.recordings.is_empty());
+    }
+
+    #[test]
+    fn rows_carry_real_values_and_the_folder() {
+        let s = live_screen();
+        let r = &s.recordings[0];
+        assert_eq!(r.display_name, "standup");
+        assert_eq!(r.date, "2026-11-24 09:00");
+        assert_eq!(r.duration, "00:10:00");
+        assert_eq!(r.size, "4 KB");
+        assert_eq!(
+            r.dir.as_deref(),
+            Some(std::path::Path::new("C:\\rec\\standup"))
+        );
+        assert_eq!(r.status, RecordingStatus::Transcribed);
+        assert_eq!(s.recordings[1].status, RecordingStatus::AudioOnly);
+    }
+
+    #[test]
+    fn the_folder_being_transcribed_shows_processing() {
+        let mut s = live_screen();
+        s.set_processing(Some((PathBuf::from("C:\\rec\\retro"), 40)));
+        assert_eq!(s.recordings[1].status, RecordingStatus::Processing(40));
+        assert_eq!(s.recordings[2].status, RecordingStatus::AudioOnly);
+        s.set_processing(Some((PathBuf::from("C:\\rec\\standup"), 10)));
+        assert_eq!(
+            s.recordings[0].status,
+            RecordingStatus::Transcribed,
+            "a transcript wins over a job"
+        );
+        s.set_processing(None);
+        assert_eq!(s.recordings[1].status, RecordingStatus::AudioOnly);
+    }
+
+    #[test]
+    fn visible_filters_by_search_date_and_sort() {
+        let mut s = live_screen();
+        let today = "2026-11-24";
+        assert_eq!(
+            names(&s, s.visible(today)),
+            ["standup", "retro", "old-review", "loose"].map(String::from)
+        );
+        s.search = "RET".into();
+        assert_eq!(names(&s, s.visible(today)), ["retro".to_owned()]);
+        s.search.clear();
+        s.date_filter_idx = 1; // today
+        assert_eq!(names(&s, s.visible(today)), ["standup".to_owned()]);
+        s.date_filter_idx = 2; // last 7 days
+        assert_eq!(
+            names(&s, s.visible(today)),
+            ["standup", "retro"].map(String::from)
+        );
+        s.date_filter_idx = 3; // last 30 days
+        assert_eq!(
+            names(&s, s.visible(today)),
+            ["standup", "retro"].map(String::from)
+        );
+        s.date_filter_idx = 0;
+        s.sort_idx = 1; // oldest first
+        assert_eq!(
+            names(&s, s.visible(today)),
+            ["loose", "old-review", "retro", "standup"].map(String::from)
+        );
+        s.sort_idx = 2; // longest
+        assert_eq!(names(&s, s.visible(today))[0], "retro");
+        s.sort_idx = 3; // biggest
+        assert_eq!(names(&s, s.visible(today))[0], "old-review");
+    }
 }

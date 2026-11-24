@@ -313,8 +313,8 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                 recorder_status_badge(ui, state, theme);
             }
 
-            // Demo control: toggle the recordings empty state
-            if state.current_screen == Screen::Recordings {
+            // Demo control: toggle the recordings empty state (sample data only)
+            if state.current_screen == Screen::Recordings && !state.recordings.live {
                 let label = if state.recordings.show_empty {
                     tr("Show recordings list")
                 } else {

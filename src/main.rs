@@ -4,7 +4,6 @@ mod audio;
 mod branding;
 mod components;
 mod i18n;
-#[allow(dead_code)] // removed when the screens use it (next task)
 mod library;
 mod modals;
 mod screens;
