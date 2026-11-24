@@ -17,6 +17,9 @@ pub struct Persisted {
     pub start_with_windows: bool,
     pub minimize_to_tray: bool,
     pub confirm_delete: bool,
+    /// Device IDs (not list positions); empty means the Windows default.
+    pub system_device: String,
+    pub mic_device: String,
 }
 
 impl Default for Persisted {
@@ -29,6 +32,8 @@ impl Default for Persisted {
             start_with_windows: false,
             minimize_to_tray: true,
             confirm_delete: true,
+            system_device: String::new(),
+            mic_device: String::new(),
         }
     }
 }
@@ -44,7 +49,7 @@ fn theme_name(mode: ThemeMode) -> &'static str {
 impl Persisted {
     pub fn to_text(&self) -> String {
         format!(
-            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nstart_with_windows={}\nminimize_to_tray={}\nconfirm_delete={}\n",
+            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nstart_with_windows={}\nminimize_to_tray={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\n",
             theme_name(self.theme_mode),
             self.accent_idx,
             self.font_scale_idx,
@@ -52,6 +57,8 @@ impl Persisted {
             self.start_with_windows,
             self.minimize_to_tray,
             self.confirm_delete,
+            self.system_device,
+            self.mic_device,
         )
     }
 
@@ -76,6 +83,8 @@ impl Persisted {
                 "start_with_windows" => set_bool(&mut out.start_with_windows, value),
                 "minimize_to_tray" => set_bool(&mut out.minimize_to_tray, value),
                 "confirm_delete" => set_bool(&mut out.confirm_delete, value),
+                "audio.system_device" => out.system_device = value.to_owned(),
+                "audio.mic_device" => out.mic_device = value.to_owned(),
                 _ => {}
             }
         }
@@ -149,8 +158,35 @@ mod tests {
             start_with_windows: true,
             minimize_to_tray: false,
             confirm_delete: false,
+            system_device: String::new(),
+            mic_device: String::new(),
         };
         assert_eq!(Persisted::from_text(&s.to_text()), s);
+    }
+
+    #[test]
+    fn device_ids_round_trip() {
+        let s = Persisted {
+            system_device: "{0.0.0.00000000}.{abc-123}".to_owned(),
+            mic_device: "{0.0.1.00000000}.{def-456}".to_owned(),
+            ..Persisted::default()
+        };
+        let text = s.to_text();
+        assert!(text.contains(
+            "audio.system_device={0.0.0.00000000}.{abc-123}
+"
+        ));
+        assert_eq!(Persisted::from_text(&text), s);
+    }
+
+    #[test]
+    fn missing_device_keys_default_to_empty() {
+        let s = Persisted::from_text(
+            "theme=light
+",
+        );
+        assert_eq!(s.system_device, "");
+        assert_eq!(s.mic_device, "");
     }
 
     #[test]

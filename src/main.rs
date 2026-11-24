@@ -38,8 +38,18 @@ fn main() -> eframe::Result<()> {
             let mut state = app::AppState::from_args(args.clone().into_iter());
             // Dev/preview flags (`--screen=...`) are for reproducible screenshots: they neither
             // read nor overwrite the user's saved preferences.
-            if !args.iter().any(|a| a.starts_with("--")) {
+            let dev_flags = args.iter().any(|a| a.starts_with("--"));
+            if !dev_flags {
                 state.enable_persistence(settings_store::load());
+            }
+            // `--audio` turns the capture worker on for a dev run (real device lists) without
+            // touching the saved preferences.
+            #[cfg(windows)]
+            if !dev_flags || args.iter().any(|a| a == "--audio") {
+                state.enable_audio(audio::worker::AudioHandle::spawn(
+                    std::sync::Arc::new(audio::wasapi_backend::WasapiBackend::new()),
+                    audio::worker::WorkerConfig::default(),
+                ));
             }
             Ok(Box::new(state))
         }),

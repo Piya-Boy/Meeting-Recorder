@@ -256,6 +256,7 @@ const THAI: &[(&str, &str)] = &[
     ("Words", "จำนวนคำ"),
     ("Today", "วันนี้"),
     ("WASAPI active", "WASAPI ทำงานอยู่"),
+    ("Windows default", "ค่าเริ่มต้นของ Windows"),
     ("WASAPI device disconnected", "อุปกรณ์ WASAPI หลุดการเชื่อมต่อ"),
     ("ASR Engine", "เอนจินถอดเสียง"),
     ("ASR engine", "เอนจินถอดเสียง"),
@@ -313,6 +314,7 @@ mod tests {
             "Speakers (Realtek(R) Audio)"
         );
         assert!(not_wired("Checksum verification").contains("ยังไม่เชื่อมต่อ"));
+        assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);
     }

@@ -3,9 +3,12 @@ use egui::{Color32, RichText, Ui};
 
 use crate::components::audio_meter::audio_level_meter;
 use crate::components::button::{block_button, ButtonVariant};
-use crate::components::select::dropdown;
 use crate::components::toggle::toggle_switch;
 use crate::theme::ThemeColors;
+
+use crate::audio::session::Event;
+use crate::audio::worker::AudioHandle;
+use crate::screens::settings::audio::{device_dropdown, AudioChoice};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecorderState {
@@ -68,14 +71,13 @@ pub struct RecorderScreen {
     pub mic_enabled: bool,
     pub sys_audio_level: f32,
     pub mic_level: f32,
-    pub sys_device_idx: usize,
-    pub mic_device_idx: usize,
     pub file_name: String,
     pub destination: String,
     pub transcript_search: String,
     pub auto_scroll: bool,
-    pub sys_devices: Vec<String>,
-    pub mic_devices: Vec<String>,
+    /// The capture worker; `None` in preview mode (dev flags, tests), where the controls
+    /// only change the on-screen state.
+    pub audio: Option<AudioHandle>,
     pub transcript_segments: Vec<TranscriptSegment>,
     pub partial_text: String,
 }
@@ -124,6 +126,16 @@ pub struct TranscriptSegment {
     pub text: String,
 }
 
+impl RecorderScreen {
+    /// What the capture worker reported since the last frame (empty in preview mode).
+    pub fn take_events(&self) -> Vec<Event> {
+        self.audio
+            .as_ref()
+            .map(AudioHandle::try_events)
+            .unwrap_or_default()
+    }
+}
+
 impl Default for RecorderScreen {
     fn default() -> Self {
         Self {
@@ -135,22 +147,11 @@ impl Default for RecorderScreen {
             mic_enabled: true,
             sys_audio_level: -14.0,
             mic_level: -19.0,
-            sys_device_idx: 0,
-            mic_device_idx: 0,
             file_name: "2026-11-23_q4-architecture-sync".to_owned(),
             destination: "C:\\Users\\Nattapong\\Documents\\MeetingRecorder\\Recordings".to_owned(),
             transcript_search: String::new(),
             auto_scroll: true,
-            sys_devices: vec![
-                "Speakers (Realtek(R) Audio) — Loopback".to_owned(),
-                "Headphones (Sony WH-1000XM5)".to_owned(),
-                "DELL U2723QE (NVIDIA HD Audio)".to_owned(),
-            ],
-            mic_devices: vec![
-                "Shure MV7 USB Podcast Microphone".to_owned(),
-                "Microphone Array (Intel Smart Sound)".to_owned(),
-                "Headset (Sony WH-1000XM5 Hands-Free)".to_owned(),
-            ],
+            audio: None,
             transcript_segments: vec![
                 TranscriptSegment {
                     timestamp: "00:00:12".to_owned(),
@@ -178,7 +179,12 @@ impl Default for RecorderScreen {
     }
 }
 
-pub fn draw_recorder_screen(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScreen) {
+pub fn draw_recorder_screen(
+    ui: &mut Ui,
+    theme: &ThemeColors,
+    screen: &mut RecorderScreen,
+    choice: &mut AudioChoice,
+) {
     // 35% / 65% split
     let left_width = (ui.available_width() * 0.35).max(320.0);
 
@@ -187,7 +193,7 @@ pub fn draw_recorder_screen(ui: &mut Ui, theme: &ThemeColors, screen: &mut Recor
         .resizable(false)
         .frame(egui::Frame::NONE.fill(theme.background))
         .show_inside(ui, |ui| {
-            draw_left_panel(ui, theme, screen);
+            draw_left_panel(ui, theme, screen, choice);
         });
 
     egui::CentralPanel::default()
@@ -204,7 +210,12 @@ pub fn draw_recorder_screen(ui: &mut Ui, theme: &ThemeColors, screen: &mut Recor
         });
 }
 
-fn draw_left_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScreen) {
+fn draw_left_panel(
+    ui: &mut Ui,
+    theme: &ThemeColors,
+    screen: &mut RecorderScreen,
+    choice: &mut AudioChoice,
+) {
     egui::ScrollArea::vertical()
         .id_salt("recorder_left")
         .show(ui, |ui| {
@@ -220,7 +231,7 @@ fn draw_left_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScreen
                     draw_status_card(ui, theme, screen);
 
                     // ── Audio Sources Card ───────────────────────
-                    draw_audio_sources_card(ui, theme, screen);
+                    draw_audio_sources_card(ui, theme, screen, choice);
 
                     // ── File Name & Storage Card ─────────────────
                     draw_file_storage_card(ui, theme, screen);
@@ -373,7 +384,12 @@ fn draw_state_badge(ui: &mut Ui, theme: &ThemeColors, state: RecorderState) {
         });
 }
 
-fn draw_audio_sources_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScreen) {
+fn draw_audio_sources_card(
+    ui: &mut Ui,
+    theme: &ThemeColors,
+    screen: &mut RecorderScreen,
+    choice: &mut AudioChoice,
+) {
     egui::Frame::NONE
         .fill(theme.surface)
         .stroke(egui::Stroke::new(1.0, theme.outline))
@@ -423,16 +439,18 @@ fn draw_audio_sources_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut Record
                     });
                 });
 
-                dropdown(
+                let width = ui.available_width();
+                let labels = choice.system_labels();
+                if let Some(i) = device_dropdown(
                     ui,
                     theme,
                     "sys_device",
-                    &mut screen.sys_device_idx,
-                    &screen.sys_devices,
-                    ui.available_width(),
-                    theme.background,
-                    false,
-                );
+                    &labels,
+                    choice.system_index(),
+                    width,
+                ) {
+                    choice.select_system(i);
+                }
 
                 audio_level_meter(
                     ui,
@@ -481,16 +499,13 @@ fn draw_audio_sources_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut Record
                     });
                 });
 
-                dropdown(
-                    ui,
-                    theme,
-                    "mic_device",
-                    &mut screen.mic_device_idx,
-                    &screen.mic_devices,
-                    ui.available_width(),
-                    theme.background,
-                    false,
-                );
+                let width = ui.available_width();
+                let labels = choice.mic_labels();
+                if let Some(i) =
+                    device_dropdown(ui, theme, "mic_device", &labels, choice.mic_index(), width)
+                {
+                    choice.select_mic(i);
+                }
 
                 audio_level_meter(ui, theme, "MIC", screen.mic_level, screen.mic_enabled);
             });
