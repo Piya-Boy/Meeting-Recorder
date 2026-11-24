@@ -2,14 +2,15 @@ use crate::i18n::tr;
 use egui::{Color32, RichText, Ui};
 
 use crate::components::audio_meter::audio_level_meter;
-use crate::components::button::{block_button, ButtonVariant};
+use crate::components::button::{block_button, custom_button, ButtonVariant};
 use crate::components::toggle::toggle_switch;
 use crate::theme::ThemeColors;
 
+use crate::asr::transcript::{format_clock, Track, Transcript};
 use crate::audio::session::{Command, Event, SessionState, Source, SourceStatus, StartRequest};
 use crate::audio::worker::AudioHandle;
 use crate::screens::settings::audio::{device_dropdown, AudioChoice};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,6 +73,39 @@ pub enum EngineState {
     Error,
 }
 
+/// The transcription of the recording the right panel shows.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum AsrJob {
+    #[default]
+    Idle,
+    /// The recording is saved but the model is not installed yet.
+    Waiting,
+    /// Sent to the worker; `total_secs` is 0 until the first progress report.
+    Running {
+        done_secs: f32,
+        total_secs: f32,
+    },
+    Done,
+    Failed(String),
+}
+
+impl AsrJob {
+    pub fn is_running(&self) -> bool {
+        matches!(self, AsrJob::Running { .. })
+    }
+}
+
+/// What a button of the Recorder asks the app to do (taken once per frame).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsrRequest {
+    /// Transcribe the last saved recording.
+    Transcribe,
+    /// Stop the running transcription.
+    Cancel,
+    /// Go to Settings > Transcription.
+    OpenSettings,
+}
+
 /// Placeholder folder of the preview; replaced by a real one when the worker is connected.
 pub const MOCK_DESTINATION: &str = "C:\\Users\\Nattapong\\Documents\\MeetingRecorder\\Recordings";
 
@@ -114,6 +148,13 @@ pub struct RecorderScreen {
     capture_mic: Option<String>,
     pub transcript_segments: Vec<TranscriptSegment>,
     pub partial_text: String,
+    /// False in preview mode, where the panel shows the mock transcript.
+    pub live: bool,
+    pub asr_job: AsrJob,
+    /// The recording folder whose job or transcript the panel shows.
+    pub transcript_dir: Option<PathBuf>,
+    /// Set by a button; taken by the app.
+    pub request: Option<AsrRequest>,
 }
 
 impl RecorderScreen {
@@ -322,12 +363,153 @@ impl RecorderScreen {
         }
     }
 
+    /// Text for the Copy button, with the speakers named in the UI language.
     pub fn transcript_text(&self) -> String {
+        self.transcript_text_with(tr("You"), tr("Others"))
+    }
+
+    pub fn transcript_text_with(&self, you: &str, others: &str) -> String {
         self.transcript_segments
             .iter()
-            .map(|s| format!("[{}] {}", s.timestamp, s.text))
+            .map(|s| match s.speaker {
+                Some(Track::Mic) => format!("[{}] {you}: {}", s.timestamp, s.text),
+                Some(Track::System) => format!("[{}] {others}: {}", s.timestamp, s.text),
+                None => format!("[{}] {}", s.timestamp, s.text),
+            })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Leaves the preview: the mock transcript goes, real lines come.
+    pub fn go_live(&mut self) {
+        if !self.live {
+            self.live = true;
+            self.transcript_segments.clear();
+            self.partial_text.clear();
+        }
+    }
+
+    /// Whether events for `dir` may change the panel. A running job keeps the panel; once it is
+    /// over, the next folder takes it.
+    fn owns(&mut self, dir: &Path) -> bool {
+        if self.transcript_dir.as_deref() == Some(dir) {
+            return true;
+        }
+        if self.asr_job.is_running() {
+            return false;
+        }
+        self.go_live();
+        self.transcript_dir = Some(dir.to_path_buf());
+        self.transcript_segments.clear();
+        self.partial_text.clear();
+        true
+    }
+
+    /// A job for `dir` was sent to the worker.
+    pub fn asr_started(&mut self, dir: PathBuf) {
+        if self.asr_job.is_running() && self.transcript_dir.as_deref() == Some(dir.as_path()) {
+            return;
+        }
+        if !self.owns(&dir) {
+            return; // queued behind the job on screen
+        }
+        self.go_live();
+        self.transcript_segments.clear();
+        self.partial_text.clear();
+        self.asr_job = AsrJob::Running {
+            done_secs: 0.0,
+            total_secs: 0.0,
+        };
+    }
+
+    /// The recording of `dir` is saved but cannot be transcribed yet.
+    pub fn asr_waiting(&mut self, dir: PathBuf) {
+        if self.owns(&dir) {
+            self.asr_job = AsrJob::Waiting;
+        }
+    }
+
+    pub fn asr_progress(&mut self, dir: &Path, done_secs: f32, total_secs: f32) {
+        if self.owns(dir) {
+            self.asr_job = AsrJob::Running {
+                done_secs,
+                total_secs,
+            };
+        }
+    }
+
+    pub fn asr_done(&mut self, dir: &Path, transcript: &Transcript) {
+        if self.owns(dir) {
+            self.set_transcript(transcript);
+            self.asr_job = AsrJob::Done;
+        }
+    }
+
+    pub fn asr_cancelled(&mut self, dir: &Path) {
+        if self.owns(dir) {
+            self.asr_job = AsrJob::Idle;
+        }
+    }
+
+    pub fn asr_failed(&mut self, dir: &Path, message: String) {
+        if self.owns(dir) {
+            self.asr_job = AsrJob::Failed(message);
+        }
+    }
+
+    /// Why the last transcription failed (its own banner; the recording is fine).
+    pub fn asr_failure_text(&self) -> Option<&str> {
+        match &self.asr_job {
+            AsrJob::Failed(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn take_request(&mut self) -> Option<AsrRequest> {
+        self.request.take()
+    }
+
+    /// Shows the lines of a finished transcript.
+    pub fn set_transcript(&mut self, t: &Transcript) {
+        self.go_live();
+        self.partial_text.clear();
+        self.transcript_segments = t
+            .lines
+            .iter()
+            .map(|l| TranscriptSegment {
+                timestamp: format_clock(l.start_ms),
+                text: l.text.clone(),
+                speaker: Some(l.track),
+            })
+            .collect();
+    }
+
+    /// English key of the text shown while the panel has no lines.
+    pub fn transcript_empty_state(&self) -> &'static str {
+        match &self.asr_job {
+            AsrJob::Running { .. } => "Transcribing...",
+            AsrJob::Waiting => "Waiting for the model",
+            AsrJob::Failed(_) => "Transcription failed",
+            AsrJob::Done => "No speech found",
+            AsrJob::Idle => "The transcript appears after you stop recording",
+        }
+    }
+
+    /// Footer text of a running job.
+    pub fn job_text(&self) -> String {
+        match &self.asr_job {
+            AsrJob::Running {
+                done_secs,
+                total_secs,
+            } if *total_secs > 0.0 => format!(
+                "{} {} / {}",
+                tr("Transcribing"),
+                clock(Duration::from_secs_f32(*done_secs)),
+                clock(Duration::from_secs_f32(*total_secs))
+            ),
+            AsrJob::Running { .. } => tr("Transcribing...").to_owned(),
+            _ => String::new(),
+        }
     }
 }
 
@@ -335,6 +517,8 @@ impl RecorderScreen {
 pub struct TranscriptSegment {
     pub timestamp: String,
     pub text: String,
+    /// Who spoke; `None` for the preview's mock lines.
+    pub speaker: Option<Track>,
 }
 
 impl RecorderScreen {
@@ -375,26 +559,35 @@ impl Default for RecorderScreen {
             transcript_segments: vec![
                 TranscriptSegment {
                     timestamp: "00:00:12".to_owned(),
+                    speaker: None,
                     text: "สวัสดีครับทุกคน วันนี้เราจะมาคุยเกี่ยวกับความคืบหน้าของโปรเจกต์ระบบบันทึกการประชุมและการถอดเสียงภาษาไทยแบบเรียลไทม์".to_owned(),
                 },
                 TranscriptSegment {
                     timestamp: "00:02:45".to_owned(),
+                    speaker: None,
                     text: "ตอนนี้ระบบหลักพัฒนาเสร็จแล้ว เหลือส่วนทดสอบและปรับปรุงประสิทธิภาพของตัวโมเดล OpenThai ASR บน Windows WASAPI".to_owned(),
                 },
                 TranscriptSegment {
                     timestamp: "00:05:18".to_owned(),
+                    speaker: None,
                     text: "จากการทดสอบเมื่อวาน การบันทึกเสียงจากระบบและไมโครโฟนแยกแทร็กทำงานได้เสถียร ไม่มีอาการดีเลย์ระหว่างการประชุมยาวสองชั่วโมง".to_owned(),
                 },
                 TranscriptSegment {
                     timestamp: "00:08:54".to_owned(),
+                    speaker: None,
                     text: "เรื่องการจัดการไฟล์เสียง เราจะบันทึกลงในเครื่องทั้งหมดก่อน แล้วเก็บดัชนีข้อความไว้ในฐานข้อมูล SQLite เพื่อให้ค้นหาคำภาษาไทยได้ทันที".to_owned(),
                 },
                 TranscriptSegment {
                     timestamp: "00:11:20".to_owned(),
+                    speaker: None,
                     text: "สำหรับสัปดาห์หน้า ทีมจะเริ่มทดสอบการส่งออกไฟล์เป็น TXT, SRT และ JSON รวมถึงตรวจสอบการใช้หน่วยความจำของ ONNX Runtime".to_owned(),
                 },
             ],
             partial_text: "เดี๋ยวเราจะลองเช็กค่าหน่วงเวลาของการสตรีมเสียงอีกครั้ง ก่อนที่จะปล่อยเวอร์ชันทดสอบภายใน...".to_owned(),
+            live: false,
+            asr_job: AsrJob::Idle,
+            transcript_dir: None,
+            request: None,
         }
     }
 }
@@ -552,6 +745,18 @@ fn draw_status_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                         .size(11.0)
                         .color(theme.success_text),
                     );
+                    if screen.live && !screen.asr_job.is_running() {
+                        let resp = custom_button(
+                            ui,
+                            theme,
+                            Some(egui_phosphor::regular::TEXT_ALIGN_LEFT),
+                            tr("Transcribe"),
+                            ButtonVariant::Secondary,
+                        );
+                        if resp.clicked() {
+                            screen.request = Some(AsrRequest::Transcribe);
+                        }
+                    }
                 }
             }
 
@@ -911,7 +1116,11 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
             // Row 1: title + engine/language badges
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(tr("Live transcript"))
+                    RichText::new(if screen.live {
+                        tr("Transcript")
+                    } else {
+                        tr("Live transcript")
+                    })
                         .size(16.0)
                         .family(crate::theme::bold_family())
                         .color(theme.on_surface),
@@ -965,6 +1174,34 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                     .size(12.0)
                     .color(theme.error_text),
                 );
+            }
+
+            if let Some(message) = screen.asr_failure_text() {
+                ui.label(
+                    RichText::new(format!("{}: {}", tr("Transcription failed"), tr(message)))
+                        .size(12.0)
+                        .color(theme.error_text),
+                );
+            }
+            if screen.asr_job == AsrJob::Waiting {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr("Waiting for the model"))
+                            .size(12.0)
+                            .color(theme.warning_text),
+                    );
+                    if custom_button(
+                        ui,
+                        theme,
+                        None,
+                        tr("Open Transcription settings"),
+                        ButtonVariant::Secondary,
+                    )
+                    .clicked()
+                    {
+                        screen.request = Some(AsrRequest::OpenSettings);
+                    }
+                });
             }
 
             // Row 2: search, auto-scroll, copy
@@ -1043,20 +1280,48 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                 .inner_margin(egui::Margin::symmetric(24, 8)),
         )
         .show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr("5 finalized segments · 1 partial · 142 Thai words"))
-                        .size(11.0)
-                        .color(theme.on_surface_variant),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !screen.live {
+                ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(tr("Latency: 210 ms · CPU: 14% (6 threads)"))
+                        RichText::new(tr("5 finalized segments · 1 partial · 142 Thai words"))
+                            .size(11.0)
+                            .color(theme.on_surface_variant),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(tr("Latency: 210 ms · CPU: 14% (6 threads)"))
+                                .font(egui::FontId::monospace(12.0))
+                                .color(theme.on_surface_variant),
+                        );
+                    });
+                });
+            } else if screen.asr_job.is_running() {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(screen.job_text())
                             .font(egui::FontId::monospace(12.0))
                             .color(theme.on_surface_variant),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if custom_button(ui, theme, None, tr("Cancel"), ButtonVariant::Secondary)
+                            .clicked()
+                        {
+                            screen.request = Some(AsrRequest::Cancel);
+                        }
+                    });
                 });
-            });
+            } else {
+                let text = if screen.asr_job == AsrJob::Done {
+                    format!("{} {}", screen.transcript_segments.len(), tr("lines"))
+                } else {
+                    String::new()
+                };
+                ui.label(
+                    RichText::new(text)
+                        .size(11.0)
+                        .color(theme.on_surface_variant),
+                );
+            }
         });
 
     // ── Transcript stream ──────────────────────────────────────────────────
@@ -1075,6 +1340,13 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                             ui.set_width(ui.available_width());
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 18.0);
 
+                            if screen.live && screen.transcript_segments.is_empty() {
+                                ui.label(
+                                    RichText::new(tr(screen.transcript_empty_state()))
+                                        .size(14.0)
+                                        .color(theme.on_surface_variant),
+                                );
+                            }
                             for seg in screen.transcript_segments.iter().filter(|s| {
                                 query.is_empty() || s.text.to_lowercase().contains(&query)
                             }) {
@@ -1088,6 +1360,25 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                                 .color(theme.on_surface_variant),
                                         ),
                                     );
+                                    if screen.live {
+                                        ui.allocate_ui(egui::vec2(64.0, 22.0), |ui| {
+                                            match seg.speaker {
+                                                Some(Track::Mic) => tinted_badge(
+                                                    ui,
+                                                    theme.brand_blue,
+                                                    theme.link_text,
+                                                    tr("You"),
+                                                ),
+                                                Some(Track::System) => tinted_badge(
+                                                    ui,
+                                                    theme.outline,
+                                                    theme.on_surface_variant,
+                                                    tr("Others"),
+                                                ),
+                                                None => {}
+                                            }
+                                        });
+                                    }
                                     ui.add(
                                         egui::Label::new(
                                             RichText::new(&seg.text)
@@ -1099,50 +1390,52 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                 });
                             }
 
-                            // Partial (in-progress) segment
-                            egui::Frame::NONE
-                                .fill(theme.background)
-                                .stroke(egui::Stroke::new(
-                                    1.0,
-                                    Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 110),
-                                ))
-                                .corner_radius(egui::CornerRadius::same(8))
-                                .inner_margin(egui::Margin::same(12))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal_top(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 16.0;
-                                        ui.vertical(|ui| {
-                                            ui.spacing_mut().item_spacing.y = 4.0;
-                                            ui.label(
-                                                RichText::new("00:14:28")
-                                                    .font(egui::FontId::monospace(12.0))
-                                                    .family(crate::theme::mono_bold_family())
-                                                    .color(theme.on_primary_container),
+                            // Partial (in-progress) segment: preview only
+                            if !screen.live {
+                                egui::Frame::NONE
+                                    .fill(theme.background)
+                                    .stroke(egui::Stroke::new(
+                                        1.0,
+                                        Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 110),
+                                    ))
+                                    .corner_radius(egui::CornerRadius::same(8))
+                                    .inner_margin(egui::Margin::same(12))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal_top(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 16.0;
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 4.0;
+                                                ui.label(
+                                                    RichText::new("00:14:28")
+                                                        .font(egui::FontId::monospace(12.0))
+                                                        .family(crate::theme::mono_bold_family())
+                                                        .color(theme.on_primary_container),
+                                                );
+                                                egui::Frame::NONE
+                                                    .fill(theme.primary_container)
+                                                    .corner_radius(egui::CornerRadius::same(4))
+                                                    .inner_margin(egui::Margin::symmetric(6, 2))
+                                                    .show(ui, |ui| {
+                                                        ui.label(
+                                                            RichText::new(tr("Partial"))
+                                                                .size(11.0)
+                                                                .color(theme.on_primary_container),
+                                                        );
+                                                    });
+                                            });
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&screen.partial_text)
+                                                        .size(15.0)
+                                                        .italics()
+                                                        .color(theme.on_surface_variant),
+                                                )
+                                                .wrap(),
                                             );
-                                            egui::Frame::NONE
-                                                .fill(theme.primary_container)
-                                                .corner_radius(egui::CornerRadius::same(4))
-                                                .inner_margin(egui::Margin::symmetric(6, 2))
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        RichText::new(tr("Partial"))
-                                                            .size(11.0)
-                                                            .color(theme.on_primary_container),
-                                                    );
-                                                });
                                         });
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&screen.partial_text)
-                                                    .size(15.0)
-                                                    .italics()
-                                                    .color(theme.on_surface_variant),
-                                            )
-                                            .wrap(),
-                                        );
                                     });
-                                });
+                            }
                         });
                 });
         });
@@ -1177,6 +1470,7 @@ fn tinted_badge(ui: &mut Ui, tint: Color32, text_color: Color32, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asr::transcript::{Line, ModelInfo};
 
     #[test]
     fn toggle_recording_starts_and_stops() {
@@ -1424,5 +1718,199 @@ mod tests {
         };
         assert!(!s.tick_engine(99.0));
         assert_eq!(s.engine, EngineState::Loading);
+    }
+
+    // ---- transcription of saved recordings ---------------------------------------------
+
+    fn line(track: Track, start_ms: u64, text: &str) -> Line {
+        Line {
+            track,
+            start_ms,
+            end_ms: start_ms + 1000,
+            text: text.to_owned(),
+        }
+    }
+
+    fn transcript(lines: Vec<Line>) -> Transcript {
+        Transcript {
+            model: ModelInfo {
+                name: "m".to_owned(),
+                revision: "r".to_owned(),
+                precision: "int8".to_owned(),
+            },
+            created: "2026-11-24T10:00:00".to_owned(),
+            lines,
+        }
+    }
+
+    #[test]
+    fn real_lines_replace_the_mock_and_keep_their_speaker() {
+        let mut s = RecorderScreen::default();
+        assert_eq!(s.transcript_segments.len(), 5, "preview has mock lines");
+        assert!(!s.live);
+        s.set_transcript(&transcript(vec![
+            line(Track::Mic, 3_000, "สวัสดี"),
+            line(Track::System, 65_000, "ครับ"),
+        ]));
+        assert!(s.live);
+        assert_eq!(s.transcript_segments.len(), 2);
+        assert_eq!(s.transcript_segments[0].timestamp, "00:00:03");
+        assert_eq!(s.transcript_segments[0].speaker, Some(Track::Mic));
+        assert_eq!(s.transcript_segments[1].timestamp, "00:01:05");
+        assert_eq!(s.transcript_segments[1].speaker, Some(Track::System));
+        assert!(s.partial_text.is_empty(), "no mock partial line");
+    }
+
+    #[test]
+    fn copied_text_names_the_speakers() {
+        let mut s = RecorderScreen::default();
+        s.set_transcript(&transcript(vec![
+            line(Track::Mic, 0, "a"),
+            line(Track::System, 2_000, "b"),
+        ]));
+        assert_eq!(
+            s.transcript_text_with("You", "Others"),
+            "[00:00:00] You: a\n[00:00:02] Others: b"
+        );
+    }
+
+    #[test]
+    fn progress_updates_the_running_job() {
+        let mut s = RecorderScreen::default();
+        let dir = PathBuf::from("rec1");
+        s.asr_started(dir.clone());
+        assert_eq!(
+            s.asr_job,
+            AsrJob::Running {
+                done_secs: 0.0,
+                total_secs: 0.0
+            }
+        );
+        s.asr_progress(&dir, 5.0, 20.0);
+        assert_eq!(
+            s.asr_job,
+            AsrJob::Running {
+                done_secs: 5.0,
+                total_secs: 20.0
+            }
+        );
+        assert_eq!(s.transcript_dir.as_deref(), Some(dir.as_path()));
+    }
+
+    #[test]
+    fn a_second_folder_waits_until_the_first_job_is_done() {
+        let mut s = RecorderScreen::default();
+        let (a, b) = (PathBuf::from("a"), PathBuf::from("b"));
+        s.asr_started(a.clone());
+        s.asr_started(b.clone()); // queued behind a: the panel stays on a
+        assert_eq!(s.transcript_dir.as_deref(), Some(a.as_path()));
+        s.asr_progress(&b, 1.0, 2.0); // not yet: a still runs
+        assert_eq!(s.transcript_dir.as_deref(), Some(a.as_path()));
+
+        s.asr_done(&a, &transcript(vec![line(Track::Mic, 0, "first")]));
+        assert_eq!(s.asr_job, AsrJob::Done);
+        assert_eq!(s.transcript_segments[0].text, "first");
+
+        s.asr_progress(&b, 0.0, 2.0); // b starts: the panel moves to it
+        assert_eq!(s.transcript_dir.as_deref(), Some(b.as_path()));
+        assert!(matches!(s.asr_job, AsrJob::Running { .. }));
+        assert!(s.transcript_segments.is_empty(), "a's lines are gone");
+        s.asr_done(&b, &transcript(vec![line(Track::System, 0, "second")]));
+        assert_eq!(s.transcript_segments[0].text, "second");
+    }
+
+    #[test]
+    fn cancel_resets_the_job_and_error_shows_its_message() {
+        let mut s = RecorderScreen::default();
+        let dir = PathBuf::from("rec1");
+        s.asr_started(dir.clone());
+        s.asr_cancelled(&dir);
+        assert_eq!(s.asr_job, AsrJob::Idle);
+        assert!(s.asr_failure_text().is_none());
+
+        s.asr_started(dir.clone());
+        s.asr_failed(&dir, "Cannot read mic.wav: bad".to_owned());
+        assert_eq!(
+            s.asr_job,
+            AsrJob::Failed("Cannot read mic.wav: bad".to_owned())
+        );
+        assert_eq!(s.asr_failure_text(), Some("Cannot read mic.wav: bad"));
+        assert_ne!(
+            s.state,
+            RecorderState::Error,
+            "the recording itself is fine"
+        );
+        assert!(s.last_error.is_none(), "not the recorder's red banner");
+    }
+
+    #[test]
+    fn a_running_job_does_not_block_a_new_recording() {
+        let mut s = RecorderScreen::default();
+        s.asr_started(PathBuf::from("rec1"));
+        s.start();
+        assert_eq!(s.state, RecorderState::Recording);
+        assert!(matches!(s.asr_job, AsrJob::Running { .. }));
+    }
+
+    #[test]
+    fn empty_state_says_what_to_wait_for() {
+        let mut s = RecorderScreen::default();
+        s.go_live();
+        assert_eq!(
+            s.transcript_empty_state(),
+            "The transcript appears after you stop recording"
+        );
+        s.asr_started(PathBuf::from("r"));
+        assert_eq!(s.transcript_empty_state(), "Transcribing...");
+        s.asr_done(&PathBuf::from("r"), &transcript(vec![]));
+        assert_eq!(s.transcript_empty_state(), "No speech found");
+        s.asr_waiting(PathBuf::from("r2"));
+        assert_eq!(s.transcript_empty_state(), "Waiting for the model");
+        s.asr_failed(&PathBuf::from("r2"), "x".to_owned());
+        assert_eq!(s.transcript_empty_state(), "Transcription failed");
+    }
+
+    #[test]
+    fn buttons_leave_a_request_for_the_app() {
+        let mut s = RecorderScreen::default();
+        assert_eq!(s.take_request(), None);
+        s.request = Some(AsrRequest::Cancel);
+        assert_eq!(s.take_request(), Some(AsrRequest::Cancel));
+        assert_eq!(s.take_request(), None, "taken once");
+    }
+
+    #[test]
+    fn progress_text_shows_clock_times() {
+        let mut s = RecorderScreen::default();
+        s.asr_started(PathBuf::from("r"));
+        assert!(!s.job_text().is_empty());
+        s.asr_progress(&PathBuf::from("r"), 23.0, 65.0);
+        // The words follow the UI language, the times do not.
+        assert!(
+            s.job_text().ends_with("00:00:23 / 00:01:05"),
+            "{}",
+            s.job_text()
+        );
+    }
+
+    #[test]
+    fn new_recorder_texts_have_thai() {
+        for key in [
+            "Transcript",
+            "The transcript appears after you stop recording",
+            "No speech found",
+            "Transcribing...",
+            "Transcribing",
+            "Waiting for the model",
+            "Waiting for the model. The recording is saved; transcribe it after the model is downloaded.",
+            "Transcription failed",
+            "Transcription cancelled",
+            "Open Transcription settings",
+            "You",
+            "Others",
+            "lines",
+        ] {
+            assert!(crate::i18n::has_thai(key), "missing Thai for {key:?}");
+        }
     }
 }

@@ -124,7 +124,8 @@ impl Resampler {
     }
 }
 
-/// The whole of `input` converted at once.
+/// The whole of `input` converted at once (the tests' shortcut).
+#[cfg(test)]
 pub fn resample_all(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     let mut r = Resampler::new(from, to);
     let mut out = r.process(input);

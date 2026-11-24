@@ -335,6 +335,19 @@ const THAI: &[(&str, &str)] = &[
     ("Model not installed", "ยังไม่ได้ติดตั้งโมเดล"),
     ("Downloading model...", "กำลังดาวน์โหลดโมเดล..."),
     ("Partial transcription and the chunk window apply to live transcription, which comes later.", "ถอดเสียงบางส่วนและช่วงเวลาสตรีมใช้กับการถอดเสียงสด ซึ่งจะมาในภายหลัง"),
+    ("Transcript", "ข้อความถอดเสียง"),
+    ("The transcript appears after you stop recording", "ข้อความถอดเสียงจะปรากฏหลังคุณหยุดบันทึก"),
+    ("No speech found", "ไม่พบเสียงพูด"),
+    ("Transcribing...", "กำลังถอดเสียง..."),
+    ("Transcribing", "กำลังถอดเสียง"),
+    ("Waiting for the model", "รอโมเดล"),
+    ("Waiting for the model. The recording is saved; transcribe it after the model is downloaded.", "รอโมเดล บันทึกเสียงถูกเก็บไว้แล้ว ถอดเสียงได้หลังดาวน์โหลดโมเดล"),
+    ("Transcription failed", "ถอดเสียงไม่สำเร็จ"),
+    ("Transcription cancelled", "ยกเลิกการถอดเสียงแล้ว"),
+    ("Open Transcription settings", "เปิดการตั้งค่าถอดเสียง"),
+    ("You", "คุณ"),
+    ("Others", "คนอื่น"),
+    ("lines", "บรรทัด"),
 ];
 
 #[cfg(test)]
@@ -369,6 +382,27 @@ mod tests {
             "Model not installed",
             "Downloading model...",
             "Partial transcription and the chunk window apply to live transcription, which comes later.",
+        ] {
+            assert!(has_thai(key), "missing Thai for {key:?}");
+        }
+    }
+
+    #[test]
+    fn recorder_transcription_texts_have_thai() {
+        for key in [
+            "Transcript",
+            "The transcript appears after you stop recording",
+            "No speech found",
+            "Transcribing...",
+            "Transcribing",
+            "Waiting for the model",
+            "Waiting for the model. The recording is saved; transcribe it after the model is downloaded.",
+            "Transcription failed",
+            "Transcription cancelled",
+            "Open Transcription settings",
+            "You",
+            "Others",
+            "lines",
         ] {
             assert!(has_thai(key), "missing Thai for {key:?}");
         }

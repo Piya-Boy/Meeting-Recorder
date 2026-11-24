@@ -77,7 +77,9 @@ pub enum Event {
     Cancelled {
         dir: PathBuf,
     },
-    /// A job is waiting: `position` 1 is the next to run.
+    /// A job is waiting: `position` 1 is the next to run. The Recorder only shows the running
+    /// job, so nothing reads the fields yet; the tests do.
+    #[allow(dead_code)]
     Queued {
         dir: PathBuf,
         position: usize,

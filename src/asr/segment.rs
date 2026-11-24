@@ -155,7 +155,8 @@ impl SegmentStream {
         }
     }
 
-    /// Samples held back for the next cut.
+    /// Samples held back for the next cut (checked by the tests).
+    #[cfg(test)]
     pub fn buffered_samples(&self) -> usize {
         self.buf.len()
     }
@@ -199,7 +200,8 @@ impl SegmentStream {
     }
 }
 
-/// The segments of a whole recording as `(start, end)` sample ranges.
+/// The segments of a whole recording as `(start, end)` sample ranges (the tests' shortcut).
+#[cfg(test)]
 pub fn split(audio: &[f32], rate: u32) -> Vec<(usize, usize)> {
     let mut stream = SegmentStream::new(rate);
     let mut out = Vec::new();

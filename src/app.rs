@@ -6,7 +6,7 @@ use crate::i18n::tr;
 use egui::Ui;
 
 use crate::screens::{
-    recorder::{draw_recorder_screen, EngineState, RecorderScreen},
+    recorder::{draw_recorder_screen, AsrRequest, EngineState, RecorderScreen},
     recordings::{draw_recordings_screen, RecordingsScreen},
     settings::{
         advanced::{draw_settings_advanced, SettingsAdvancedScreen},
@@ -327,8 +327,63 @@ impl AppState {
             AsrEvent::Engine(EngineEvent::Loading) => self.recorder.engine = EngineState::Loading,
             AsrEvent::Engine(EngineEvent::Ready) => self.recorder.engine = EngineState::Ready,
             AsrEvent::Engine(EngineEvent::Failed(_)) => self.recorder.engine = EngineState::Error,
-            // Jobs are shown by the Recorder (wired in the next task).
-            _ => {}
+            AsrEvent::Progress {
+                done_secs,
+                total_secs,
+                dir,
+            } => self.recorder.asr_progress(&dir, done_secs, total_secs),
+            AsrEvent::Done { dir, transcript } => self.recorder.asr_done(&dir, &transcript),
+            AsrEvent::Cancelled { dir } => {
+                self.recorder.asr_cancelled(&dir);
+                self.asr_notice = Some("Transcription cancelled".to_owned());
+            }
+            AsrEvent::Error {
+                dir: Some(dir),
+                message,
+            } => self.recorder.asr_failed(&dir, message),
+            AsrEvent::Error { dir: None, message } => self.asr_notice = Some(message),
+            // The job waits behind another; the panel keeps showing the running one.
+            AsrEvent::Queued { .. } => {}
+        }
+    }
+
+    /// Sends a saved recording to the worker, or notes that it has to wait for the model.
+    /// Does nothing in preview mode (no worker).
+    fn start_transcription(&mut self, dir: std::path::PathBuf) {
+        if self.asr.is_none() {
+            return;
+        }
+        if self.settings_transcription.model_status != ModelStatus::Ready {
+            self.recorder.asr_waiting(dir);
+            self.asr_notice = Some(
+                "Waiting for the model. The recording is saved; transcribe it after the model is downloaded."
+                    .to_owned(),
+            );
+            return;
+        }
+        if let Some(asr) = &self.asr {
+            asr.send(AsrCommand::Transcribe {
+                dir: dir.clone(),
+                precision: self.settings_transcription.precision,
+                threads: self.settings_transcription.threads(),
+            });
+        }
+        self.recorder.asr_started(dir);
+    }
+
+    fn handle_recorder_request(&mut self, request: AsrRequest) {
+        match request {
+            AsrRequest::OpenSettings => self.current_screen = Screen::SettingsTranscription,
+            AsrRequest::Transcribe => {
+                if let Some(dir) = self.recorder.saved_dir.clone() {
+                    self.start_transcription(dir);
+                }
+            }
+            AsrRequest::Cancel => {
+                if let Some(asr) = &self.asr {
+                    asr.send(AsrCommand::CancelTranscribe);
+                }
+            }
         }
     }
 
@@ -339,6 +394,9 @@ impl AppState {
 
     /// Passes worker reports to the screens and the screens' requests to the worker.
     pub fn sync_asr(&mut self) {
+        if let Some(request) = self.recorder.take_request() {
+            self.handle_recorder_request(request);
+        }
         let events = match &self.asr {
             Some(asr) => asr.try_events(),
             None => return,
@@ -346,6 +404,7 @@ impl AppState {
         for event in events {
             self.apply_asr_event(event);
         }
+        self.settings_transcription.busy = self.recorder.asr_job.is_running();
         let precision = self.settings_transcription.precision;
         let action = self.settings_transcription.action.take();
         let Some(asr) = &self.asr else {
@@ -370,6 +429,7 @@ impl AppState {
     pub fn enable_audio(&mut self, handle: AudioHandle) {
         handle.send(Command::ListDevices);
         self.recorder.audio = Some(handle);
+        self.recorder.go_live();
         // The mock folder belongs to someone else's profile; record under this user's.
         if self.recorder.destination == crate::screens::recorder::MOCK_DESTINATION {
             if let Some(home) = std::env::var_os("USERPROFILE") {
@@ -396,6 +456,13 @@ impl AppState {
     pub fn apply_audio_event(&mut self, event: Event) {
         match event {
             Event::Devices { system, mic } => self.audio_choice.apply_devices(system, mic),
+            Event::Saved { dir, duration } => {
+                self.recorder.apply_event(Event::Saved {
+                    dir: dir.clone(),
+                    duration,
+                });
+                self.start_transcription(dir);
+            }
             other => self.recorder.apply_event(other),
         }
     }
@@ -490,10 +557,11 @@ impl eframe::App for AppState {
         }
         if self.asr.is_some() {
             // Worker events do not wake egui by themselves.
-            let busy = matches!(
-                self.recorder.engine,
-                EngineState::Downloading | EngineState::Loading
-            );
+            let busy = self.recorder.asr_job.is_running()
+                || matches!(
+                    self.recorder.engine,
+                    EngineState::Downloading | EngineState::Loading
+                );
             let wait = if busy { 100 } else { 500 };
             ctx.request_repaint_after(std::time::Duration::from_millis(wait));
         }
@@ -831,6 +899,229 @@ mod tests {
         );
         drop(a);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    struct Says(&'static str);
+    struct SaysRecognizer(&'static str);
+    impl crate::asr::engine::Recognizer for SaysRecognizer {
+        fn recognize(&mut self, _samples: &[f32]) -> Result<String, String> {
+            Ok(self.0.to_owned())
+        }
+    }
+    impl crate::asr::worker::RecognizerFactory for Says {
+        fn load(
+            &self,
+            _dir: &std::path::Path,
+            _threads: usize,
+        ) -> Result<Box<dyn crate::asr::engine::Recognizer>, String> {
+            Ok(Box::new(SaysRecognizer(self.0)))
+        }
+    }
+
+    fn says_handle(models: &std::path::Path) -> crate::asr::worker::AsrHandle {
+        crate::asr::worker::AsrHandle::spawn(
+            std::sync::Arc::new(Says("hi")),
+            crate::asr::worker::AsrConfig {
+                models_base: Some(models.to_path_buf()),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// A session folder with 2 s of loud audio on both tracks.
+    fn session_dir(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tone: Vec<i16> = (0..32_000)
+            .map(|i| (0.3 * 32_767.0 * (i as f32 * 0.07).sin()) as i16)
+            .collect();
+        for f in ["mic.wav", "system.wav"] {
+            let file = std::fs::File::create(dir.join(f)).unwrap();
+            let mut w = crate::audio::wav::WavWriter::new(file, 16_000).unwrap();
+            w.write_samples(&tone).unwrap();
+            w.finish().unwrap();
+        }
+        dir
+    }
+
+    fn saved(dir: &std::path::Path) -> Event {
+        Event::Saved {
+            dir: dir.to_path_buf(),
+            duration: std::time::Duration::from_secs(2),
+        }
+    }
+
+    fn wait_until(a: &mut AppState, what: &str, done: impl Fn(&AppState) -> bool) {
+        let t = std::time::Instant::now();
+        while !done(a) {
+            a.sync_asr();
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn saved_recording_is_transcribed_into_the_panel() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::asr::transcript::Track;
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-job");
+        install(&base, Precision::Int8);
+        let dir = session_dir(&base, "rec1");
+
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(&base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.apply_audio_event(saved(&dir));
+        assert!(matches!(a.recorder.asr_job, AsrJob::Running { .. }));
+        assert_eq!(a.recorder.transcript_dir.as_deref(), Some(dir.as_path()));
+
+        wait_until(&mut a, "job done", |a| a.recorder.asr_job == AsrJob::Done);
+        let speakers: Vec<_> = a
+            .recorder
+            .transcript_segments
+            .iter()
+            .map(|s| s.speaker)
+            .collect();
+        assert_eq!(speakers, vec![Some(Track::Mic), Some(Track::System)]);
+        assert!(a
+            .recorder
+            .transcript_segments
+            .iter()
+            .all(|s| s.text == "hi"));
+        assert!(dir.join("transcript.json").is_file());
+        assert!(dir.join("transcript.txt").is_file());
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn saved_without_the_model_waits_and_leaves_the_recording_alone() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::{AsrJob, AsrRequest, RecorderState};
+        let base = crate::audio::temp_dir("app-wait");
+        let dir = session_dir(&base, "rec1");
+
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(&base));
+        wait_for(&mut a, ModelStatus::Missing);
+        a.recorder.state = RecorderState::Saved;
+        a.apply_audio_event(saved(&dir));
+        assert_eq!(a.recorder.asr_job, AsrJob::Waiting);
+        assert_eq!(a.recorder.state, RecorderState::Saved);
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Waiting for the model. The recording is saved; transcribe it after the model is downloaded.")
+        );
+        assert!(!dir.join("transcript.json").exists(), "nothing was started");
+
+        // the model arrives; the Transcribe button starts the job
+        install(&base, Precision::Int8);
+        a.apply_asr_event(crate::asr::worker::Event::Model(ModelStatus::Ready));
+        a.recorder.request = Some(AsrRequest::Transcribe);
+        a.sync_asr();
+        assert!(matches!(a.recorder.asr_job, AsrJob::Running { .. }));
+        wait_until(&mut a, "job done", |a| a.recorder.asr_job == AsrJob::Done);
+        assert!(dir.join("transcript.txt").is_file());
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn two_saved_recordings_both_get_a_transcript() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-two");
+        install(&base, Precision::Int8);
+        let (d1, d2) = (session_dir(&base, "rec1"), session_dir(&base, "rec2"));
+
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(&base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.apply_audio_event(saved(&d1));
+        a.apply_audio_event(saved(&d2));
+        assert_eq!(
+            a.recorder.transcript_dir.as_deref(),
+            Some(d1.as_path()),
+            "the panel shows the first job"
+        );
+        wait_until(&mut a, "second job done", |a| {
+            a.recorder.transcript_dir.as_deref() == Some(d2.as_path())
+                && a.recorder.asr_job == AsrJob::Done
+        });
+        assert!(d1.join("transcript.txt").is_file());
+        assert!(d2.join("transcript.txt").is_file());
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_failing_job_shows_its_message_and_not_the_recorder_error() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-fail");
+        install(&base, Precision::Int8);
+        let dir = base.join("empty"); // no recordings in it
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(&base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.apply_audio_event(saved(&dir));
+        wait_until(&mut a, "failure", |a| {
+            matches!(a.recorder.asr_job, AsrJob::Failed(_))
+        });
+        assert!(a
+            .recorder
+            .asr_failure_text()
+            .unwrap()
+            .starts_with("No recordings found"));
+        assert!(a.recorder.last_error.is_none());
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn cancel_button_stops_the_job() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::{AsrJob, AsrRequest};
+        let base = crate::audio::temp_dir("app-cancel");
+        install(&base, Precision::Int8);
+        let dir = session_dir(&base, "rec1");
+
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(&base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.apply_audio_event(saved(&dir));
+        a.recorder.request = Some(AsrRequest::Cancel);
+        // the job may already be over on a fast machine; either way the app must settle
+        wait_until(&mut a, "settled", |a| {
+            matches!(a.recorder.asr_job, AsrJob::Idle | AsrJob::Done)
+        });
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn settings_button_in_the_recorder_opens_transcription_settings() {
+        use crate::screens::recorder::AsrRequest;
+        let mut a = AppState::default();
+        a.recorder.request = Some(AsrRequest::OpenSettings);
+        a.sync_asr();
+        assert_eq!(a.current_screen, Screen::SettingsTranscription);
+    }
+
+    #[test]
+    fn preview_mode_keeps_the_mock_transcript_when_saved_is_simulated() {
+        use crate::screens::recorder::AsrJob;
+        let mut a = AppState::default();
+        a.apply_audio_event(saved(std::path::Path::new("somewhere")));
+        assert_eq!(a.recorder.transcript_segments.len(), 5);
+        assert_eq!(a.recorder.asr_job, AsrJob::Idle);
+        assert!(!a.recorder.live);
     }
 
     #[test]

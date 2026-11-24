@@ -1,5 +1,4 @@
 mod app;
-#[allow(dead_code)] // wired into the UI in a later task
 mod asr;
 mod audio;
 mod branding;
@@ -52,13 +51,17 @@ fn main() -> eframe::Result<()> {
                     audio::worker::WorkerConfig::default(),
                 ));
             }
-            // The transcription worker only reads files and runs the model; it is also
-            // started for `--audio`-style dev runs only when asked, so screenshots stay
-            // reproducible.
-            if !dev_flags || args.iter().any(|a| a == "--asr") {
+            // Same condition as the capture worker: dev flags keep the preview, `--audio`
+            // turns the real workers on.
+            if !dev_flags || args.iter().any(|a| a == "--audio") {
+                // transcript.txt names the speakers in the language the app starts in.
+                i18n::set_lang(i18n::lang_from_index(state.settings_general.language_idx));
                 state.enable_asr(asr::worker::AsrHandle::spawn(
                     std::sync::Arc::new(asr::worker::OrtFactory),
-                    asr::worker::AsrConfig::default(),
+                    asr::worker::AsrConfig {
+                        labels: (i18n::tr("You").to_owned(), i18n::tr("Others").to_owned()),
+                        ..Default::default()
+                    },
                 ));
             }
             Ok(Box::new(state))
