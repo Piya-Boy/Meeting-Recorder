@@ -27,11 +27,15 @@ _None._
   - Word fixes match exactly (Latin letters in any case): every wrong form has to be listed (the run below wrote "มก", which the seeded rules did not list, so "มอก." did not appear). Fixes do not change transcripts made before a rule was added.
   - Verification: do each item and record the result here.
 - [ ] Task: Release follow-ups (open items of the update check work)
-  - Run the `Release` workflow by hand once on GitHub (Actions > Release > Run workflow): it only builds and uploads the zip, nothing is published. It has never run on GitHub; `cargo test --locked` on a clean runner is unproven (a runner has no audio device or model).
+  - The `Release` workflow ran once, for tag `v0.0.1`: the version and tag steps passed and `cargo test --locked` failed on a flaky test (see the CI task); the build, zip and draft Release steps have not run yet. Once the fix is on `main`, move the tag (`git push origin :refs/tags/v0.0.1`, then push it again from the new commit) or run the workflow by hand (Actions > Release > Run workflow builds the zip and publishes nothing).
   - Decide the licence (the gate in `DECISIONS.md`) before the first public Release: the zip carries `LICENSE`, and GitHub shows the repository as Apache-2.0 while `Cargo.toml` and `LICENSE` in the working tree say PolyForm Noncommercial.
   - The exe is not signed, so Windows SmartScreen warns on the first run; a download section in `README.md` should say so and give the SHA-256 check.
   - The collapsed sidebar shows no update hint; the Thai and light-theme screens were not screenshotted.
   - Cut a release: raise `version` in `Cargo.toml` and commit, `git tag vN.N.N`, `git push origin vN.N.N`; the workflow builds a draft Release; check the zip and publish the draft (only a published Release is found by the app).
+  - Verification: do each item and record the result here.
+- [ ] Task: Flaky tests and CI settings (open items of the CI work)
+  - `asr::worker::tests::the_model_is_unloaded_after_the_idle_time` failed once in 24 runs of the test binary started 4 at a time (the whole suite under load); 80 parallel runs of that test alone did not fail and the failure message was not kept. It waits 500 ms for a 100 ms idle limit, so a starved worker thread is the likely cause. Catch the message (`cargo test` in a loop with `--nocapture` logging) before changing it.
+  - Set branch protection on `main` to require the `fmt`, `test` and `audit` checks once CI has passed on GitHub (repository settings; not done from here).
   - Verification: do each item and record the result here.
 - [ ] Task: Library follow-ups (open items of the real-data work)
   - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
@@ -204,6 +208,13 @@ _None._
   - Found on the way: the About card squeezed the version label when the update buttons shared its row; they moved to a row below.
   - Not run: the workflow on GitHub; clicking "Open download page" (the test replaces the opener; it runs `explorer <url>`); Thai and light-theme screenshots.
   - Commit: branch `feature/update-check`, not pushed, no PR, no Release.
+
+- [x] Task: CI workflow and Dependabot (branch `ci/add-ci-workflow`, from `main`)
+  - Built: `.github/workflows/ci.yml` runs on every pull request to `main` and every push to `main`: `fmt` (`cargo fmt --check`, Linux), `test` (`cargo clippy --all-targets --locked -- -D warnings`, then `cargo test --locked`, on `windows-latest` with `Swatinem/rust-cache`), `audit` (`cargo audit`, Linux). `.github/dependabot.yml` updates the SHA-pinned actions and the cargo dependencies weekly (cargo minor and patch updates in one group). `.cargo/audit.toml` ignores RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (`quick-xml` 0.30, reached only through the Linux accessibility bridge `accesskit_unix`; `cargo tree -i quick-xml@0.30.0 --target x86_64-pc-windows-msvc` is empty) with the reason written beside them. The five other audit findings are "unmaintained" warnings, which do not fail the job.
+  - Verification Evidence: both YAML files parse; the exact commands were run locally (`cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings` clean, `cargo test --locked`); `cargo audit` (installed under the scratchpad) found 2 vulnerabilities before `.cargo/audit.toml` and exits 0 after it.
+  - Found on the way: the first Release run (tag `v0.0.1`) failed at `cargo test --locked` on the runner with `asr::download::tests::cancel_keeps_the_part_and_a_second_run_resumes` ("part is 100000 bytes"): the client read the whole file in one read, so the cancel was seen after the file was complete. Not a product bug (a cancel after the last byte just resumes into a finished file); the test assumed the read sizes. Fixed in `test: make the download cancel test independent of read sizes` (branch `fix/download-cancel-test-flake`): the fake server sends 30,000 bytes and holds the connection until the client hangs up; the test also asserts the cancel is prompt (a mutation that ignores the cancel in the read loop made it fail). I could not reproduce the runner's one-read case here (reads came back as 78,840 bytes); the fix does not depend on it.
+  - Not run: the CI workflow on GitHub; branch protection (required checks `fmt`, `test`, `audit`) is not set.
+  - Commit: branch `ci/add-ci-workflow`, not pushed, no PR.
 
 ## Rules
 

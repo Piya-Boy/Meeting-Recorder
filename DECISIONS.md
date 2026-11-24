@@ -279,3 +279,12 @@ _Add decisions below._
 - Alternatives: Download, check SHA-256 and replace the exe on the next start (a checksum in the same Release does not protect against a hijacked account, so it needs a signature and a key inside the app); the same with a confirmation (still needs signing); no check at all.
 - Consequences: The check sends the user's IP address and `meeting-recorder/<version>` to GitHub, so the switch says so; there is no offline or proxy handling beyond a 15 s limit. Updating is still a manual download. Self-update can grow from this once releases are signed.
 - References: `src/update.rs`, `.github/workflows/release.yml`, `docs/superpowers/specs/2026-11-25-update-check-design.md`
+
+### 2026-11-25 - CI: Windows runner, pinned actions, audit with a reasoned ignore list
+
+- Status: Accepted
+- Context: There was no CI; the only workflow built a release. The first release run showed that a test the author never saw fail can fail on a clean runner.
+- Decision: One workflow checks every pull request to `main` and every push to `main`: formatting (Linux, nothing compiles), clippy with warnings denied and the tests (`windows-latest`, because the audio crate is Windows-only), and `cargo audit` of `Cargo.lock` (Linux). Every third-party action is pinned to a commit SHA and Dependabot keeps the pins and the cargo dependencies current. Advisories that cannot reach the Windows build are ignored in `.cargo/audit.toml`, one by one, with the reason written next to each (quick-xml 0.30 comes only from the Linux accessibility bridge). Unmaintained-crate warnings do not fail the audit.
+- Alternatives: Test on Linux too (the audio crate does not build there); `cargo deny` (more rules to maintain for one app); caching with `actions/cache` by hand (more YAML than `Swatinem/rust-cache`); a release build on every pull request (slow; the Release workflow builds on a tag).
+- Consequences: A red audit later means a new advisory or a changed dependency tree and needs a decision, not a retry. The ignore list must be reviewed when `eframe` is updated. Required checks on `main` are a repository setting that is not in the code.
+- References: `.github/workflows/ci.yml`, `.github/dependabot.yml`, `.cargo/audit.toml`
