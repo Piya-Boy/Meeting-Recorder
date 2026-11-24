@@ -1,6 +1,6 @@
 # Recordings and Transcripts from real data — design
 
-Date: 2026-11-24. Branch `feature/library-real-data` (stacked on `feature/asr-transcription`, PR #3).
+Date: 2026-11-24. Branch `feature/library-real-data` (stacked on `feature/asr-transcription`, PR #3). Implemented; results and open items are in `TASKS.md`.
 Status: the user chose this as the next task, asked for no further questions ("เอาแบบเดิม") and so
 approved the proposal made in the conversation (scan the folders, no SQLite for now). Every call
 below is the author's; each is also a ledger ruling.

@@ -85,7 +85,7 @@ _None._
     - PASS closing the window during a recording finalizes: after 7 s both files had full headers (336784 frames each, equal) because the worker finalizes when the app drops it.
     - PASS the UI did not stall in any of the 5 recording runs (observed, not measured).
   - Not verified: capturing a real Zoom/Teams call, participant separation between tracks, quit/reopen of the meeting app, microphone unplug, process-loopback timestamps from a live process. These are the open task above; the roadmap item stays unticked.
-  - Commit: branch `feature/audio-capture`, not pushed, no PR.
+  - Commit: branch `feature/audio-capture`, PR #2 (open).
 
 - [x] Task: Offline Thai transcription of every saved recording (branch `feature/asr-transcription`; spec `docs/superpowers/specs/2026-11-24-asr-transcription-design.md`, plan `docs/superpowers/plans/2026-11-24-asr-transcription.md`)
   - Built: ONNX Runtime recognizer (OpenThai 2.0 ASR Streaming, ported parts of PoodPim, MIT) behind a worker thread with a queue, cancel and idle unload; model download on first use (pinned revision, SHA-256, resume, zip extract, `ready.ok`); resampling to 16 kHz; pause-based segmentation; Thai text normalisation; merge of the two tracks into `transcript.json` and `transcript.txt` (written atomically, mic = "You", system = "Others"); Settings > Transcription with a real model state, Download / Cancel / Delete, precision and thread count (saved); Recorder shows the transcript, progress, Cancel, "N lines", the "Waiting for the model" notice and failures.
@@ -102,7 +102,7 @@ _None._
     - NOT RUN 2-minute speech with a clean capture: see the open task above.
   - Not verified: speaker labels on a real call (mic = "You", system = "Others" came from the clip runs, where the clips played through the speakers and the whole-system loopback also caught other PC audio).
   - Open gate for any release: licence compatibility of the model (OpenMDW-1.1) with this project's licence, and the "Powered by OpenThai ASR" badge (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
-  - Commit: branch `feature/asr-transcription`, not pushed, no PR.
+  - Commit: branch `feature/asr-transcription`, PR #3 (open, stacked on #2).
 
 - [x] Task: Recordings, Transcripts and Transcript Detail from real data (branch `feature/library-real-data`; spec `docs/superpowers/specs/2026-11-24-library-real-data-design.md`, plan `docs/superpowers/plans/2026-11-24-library-real-data.md`)
   - Built: `src/library.rs` scans the session folders under the Recorder's destination (WAV durations and sizes, `transcript.json`) on a background thread; Recordings lists them with working search, date filter and sort, Transcribe for audio-only rows, Delete (only the files the app wrote; refused while recording or transcribing) and Open folder; Transcripts lists the transcribed ones (line count, first line, search through every line); the detail page shows the real lines with You / Others chips; Copy and Copy all give the text of `transcript.txt`. Dev-flag runs without `--audio` keep the sample data.

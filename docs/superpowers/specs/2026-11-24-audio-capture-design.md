@@ -1,6 +1,6 @@
 # Audio capture (WASAPI, dual track) design
 
-Status: draft for user review, 2026-11-24. Nothing here is implemented.
+Status: implemented on branch `feature/audio-capture` (PR #2). Acceptance on a real Zoom/Teams call is still open; see `TASKS.md`.
 
 ## Intent and why
 

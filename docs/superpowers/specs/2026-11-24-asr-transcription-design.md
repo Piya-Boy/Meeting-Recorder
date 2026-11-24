@@ -1,6 +1,6 @@
 # Thai transcription after recording (OpenThai ASR on ONNX Runtime) design
 
-Status: draft for user review, 2026-11-24. Nothing here is implemented.
+Status: implemented on branch `feature/asr-transcription` (PR #3). Open items (clean-capture speech run, mid-file download resume, live transcript, licence gate) are in `TASKS.md` and `DECISIONS.md`.
 
 ## Intent and why
 
