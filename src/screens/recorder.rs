@@ -154,6 +154,8 @@ pub struct RecorderScreen {
     /// a late line in its place).
     live_for: Option<PathBuf>,
     live_starts: Vec<u64>,
+    /// The segments being spoken now, one per track, in time order (preview text).
+    live_partial_rows: Vec<Line>,
     /// False in preview mode, where the panel shows the mock transcript.
     pub live: bool,
     pub asr_job: AsrJob,
@@ -425,6 +427,7 @@ impl RecorderScreen {
         self.transcript_segments.clear();
         self.partial_text.clear();
         self.live_starts.clear();
+        self.live_partial_rows.clear();
         self.asr_job = AsrJob::Idle;
         self.live_for = Some(dir);
         self.live_on = true;
@@ -448,15 +451,33 @@ impl RecorderScreen {
         );
     }
 
+    /// The preview of what `track` is saying now (`None` withdraws it); another folder is ignored.
+    pub fn live_partial(&mut self, dir: &Path, track: Track, line: Option<&Line>) {
+        if self.live_for.as_deref() != Some(dir) {
+            return;
+        }
+        self.live_partial_rows.retain(|l| l.track != track);
+        if let Some(line) = line {
+            self.live_partial_rows.push(line.clone());
+            self.live_partial_rows.sort_by_key(|l| l.start_ms);
+        }
+    }
+
+    pub fn live_partials(&self) -> &[Line] {
+        &self.live_partial_rows
+    }
+
     /// The live run is over (the lines stay until the final transcript replaces them).
     pub fn live_stopped(&mut self) {
         self.live_on = false;
+        self.live_partial_rows.clear();
     }
 
     /// The worker says the live run for `dir` ended.
     pub fn live_ended(&mut self, dir: &Path) {
         if self.live_for.as_deref() == Some(dir) {
             self.live_on = false;
+            self.live_partial_rows.clear();
         }
     }
 
@@ -476,6 +497,7 @@ impl RecorderScreen {
         }
         self.partial_text.clear();
         self.live_on = false;
+        self.live_partial_rows.clear();
         self.asr_job = AsrJob::Running {
             done_secs: 0.0,
             total_secs: 0.0,
@@ -535,6 +557,7 @@ impl RecorderScreen {
         self.partial_text.clear();
         self.live_for = None;
         self.live_starts.clear();
+        self.live_partial_rows.clear();
         self.transcript_segments = t
             .lines
             .iter()
@@ -624,6 +647,7 @@ impl Default for RecorderScreen {
             live_on: false,
             live_for: None,
             live_starts: Vec::new(),
+            live_partial_rows: Vec::new(),
             transcript_segments: vec![
                 TranscriptSegment {
                     timestamp: "00:00:12".to_owned(),
@@ -1408,7 +1432,10 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                             ui.set_width(ui.available_width());
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 18.0);
 
-                            if screen.live && screen.transcript_segments.is_empty() {
+                            if screen.live
+                                && screen.transcript_segments.is_empty()
+                                && screen.live_partials().is_empty()
+                            {
                                 ui.label(
                                     RichText::new(tr(screen.transcript_empty_state()))
                                         .size(14.0)
@@ -1456,6 +1483,48 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                         .wrap(),
                                     );
                                 });
+                            }
+
+                            // What is being said right now: grey and italic until its line is final.
+                            if screen.live {
+                                for p in screen.live_partials() {
+                                    ui.horizontal_top(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 16.0;
+                                        ui.add_sized(
+                                            [64.0, 22.0],
+                                            egui::Label::new(
+                                                RichText::new(format_clock(p.start_ms))
+                                                    .font(egui::FontId::monospace(12.0))
+                                                    .color(theme.on_surface_variant),
+                                            ),
+                                        );
+                                        ui.allocate_ui(egui::vec2(64.0, 22.0), |ui| {
+                                            match p.track {
+                                                Track::Mic => tinted_badge(
+                                                    ui,
+                                                    theme.brand_blue,
+                                                    theme.link_text,
+                                                    tr("You"),
+                                                ),
+                                                Track::System => tinted_badge(
+                                                    ui,
+                                                    theme.outline,
+                                                    theme.on_surface_variant,
+                                                    tr("Others"),
+                                                ),
+                                            }
+                                        });
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&p.text)
+                                                    .size(15.0)
+                                                    .italics()
+                                                    .color(theme.on_surface_variant),
+                                            )
+                                            .wrap(),
+                                        );
+                                    });
+                                }
                             }
 
                             // Partial (in-progress) segment: preview only
@@ -2082,5 +2151,43 @@ mod tests {
             .map(|x| x.text.as_str())
             .collect();
         assert_eq!(texts, ["final one", "final two"]);
+    }
+
+    #[test]
+    fn partial_text_is_kept_per_track_and_withdrawn_by_none() {
+        let dir = PathBuf::from("C:\\rec\\a");
+        let mut s = RecorderScreen::default();
+        assert!(s.live_started(dir.clone()));
+        s.live_partial(&dir, Track::Mic, Some(&live(Track::Mic, 2_000, "me")));
+        s.live_partial(
+            &dir,
+            Track::System,
+            Some(&live(Track::System, 1_000, "them")),
+        );
+        let rows: Vec<_> = s.live_partials().iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(rows, ["them", "me"], "in time order");
+        s.live_partial(&dir, Track::Mic, Some(&live(Track::Mic, 2_000, "me again")));
+        assert_eq!(s.live_partials().len(), 2, "a track has one partial");
+        s.live_partial(&dir, Track::System, None);
+        assert_eq!(s.live_partials().len(), 1);
+        // another folder is ignored
+        s.live_partial(
+            Path::new("C:\\rec\\other"),
+            Track::System,
+            Some(&live(Track::System, 0, "x")),
+        );
+        assert_eq!(s.live_partials().len(), 1);
+    }
+
+    #[test]
+    fn partials_go_when_live_stops_and_the_final_transcript_arrives() {
+        let dir = PathBuf::from("C:\\rec\\a");
+        let mut s = RecorderScreen::default();
+        assert!(s.live_started(dir.clone()));
+        s.live_partial(&dir, Track::Mic, Some(&live(Track::Mic, 0, "p")));
+        s.live_stopped();
+        assert!(s.live_partials().is_empty());
+        assert!(s.live_started(dir.clone()));
+        assert!(s.live_partials().is_empty(), "a new run starts clean");
     }
 }

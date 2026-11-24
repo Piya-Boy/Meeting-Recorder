@@ -29,7 +29,7 @@ const MAX_SEG_S: f32 = 25.0;
 /// Pending audio the cut rules look at; longer than `MAX_SEG_S` so a cut always exists.
 const WINDOW_S: f32 = 30.0;
 /// Segments shorter than this are dropped (seconds).
-const MIN_SEGMENT_S: f32 = 0.3;
+pub const MIN_SEGMENT_S: f32 = 0.3;
 /// Frames quieter than this count as silence when trimming (dBFS, rms).
 const SOUND_DB: f32 = -50.0;
 /// Kept around the sound when trimming (seconds).
@@ -122,7 +122,7 @@ fn find_cut(pending: &[f32], rate: usize) -> Option<usize> {
 
 /// Range of `seg` from the first to the last loud 20 ms frame, with padding; `None` when
 /// nothing in it is loud.
-fn trim(seg: &[f32], rate: usize) -> Option<(usize, usize)> {
+pub fn trim(seg: &[f32], rate: usize) -> Option<(usize, usize)> {
     let frame = (rate / 50).max(1);
     let loud: Vec<usize> = frame_db(seg, frame)
         .iter()
@@ -194,6 +194,12 @@ impl SegmentStream {
             }
             self.emit(cut, on_segment);
         }
+    }
+
+    /// The audio after the last cut, with the sample it starts at (for a preview of the
+    /// segment that is still being spoken).
+    pub fn tail(&self) -> (usize, &[f32]) {
+        (self.offset, &self.buf)
     }
 
     /// The end of the recording: the rest is cut and emitted.
@@ -568,5 +574,27 @@ mod tests {
         let path = dir.join("a.wav");
         std::fs::write(&path, b"nope").unwrap();
         assert!(segment_file(&path, &mut |_, _| {}, &mut |_, _| true).is_err());
+    }
+
+    #[test]
+    fn tail_is_the_unfinished_audio_and_where_it_starts() {
+        let rate = 16_000usize;
+        let tone: Vec<f32> = (0..3 * rate)
+            .map(|i| 0.3 * (i as f32 * 0.07).sin())
+            .collect();
+        let mut s = SegmentStream::new(rate as u32);
+        let mut cuts = 0;
+        s.push(&tone, &mut |_, _| cuts += 1);
+        s.poll(&mut |_, _| cuts += 1);
+        assert_eq!(cuts, 0, "no pause yet");
+        let (start, tail) = s.tail();
+        assert_eq!((start, tail.len()), (0, 3 * rate));
+
+        // a pause completes the first segment; the tail is what comes after the cut
+        s.push(&vec![0.0; rate * 3 / 2], &mut |_, _| cuts += 1);
+        s.poll(&mut |_, _| cuts += 1);
+        assert_eq!(cuts, 1);
+        let (start, tail) = s.tail();
+        assert!(start > 0 && start + tail.len() == 3 * rate + rate * 3 / 2);
     }
 }

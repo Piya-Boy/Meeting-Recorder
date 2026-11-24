@@ -364,7 +364,7 @@ pub fn draw_settings_transcription(
                     ui,
                     theme,
                     "Partial transcription",
-                    Some("Show transcript lines while recording. Each line appears after a pause."),
+                    Some("Show transcript text while recording. Grey text may still change; a line is final after a pause."),
                     40.0,
                     |ui| {
                         toggle_switch(ui, theme, &mut screen.partial_transcription);

@@ -60,6 +60,8 @@ pub enum Command {
         precision: Precision,
         threads: usize,
         poll_ms: u64,
+        /// Also report the segment that is still being spoken (`Event::LivePartial`).
+        partial: bool,
     },
     /// Ends the live run (or removes it from the queue). Does not touch the files.
     LiveStop,
@@ -92,6 +94,13 @@ pub enum Event {
     LiveLine {
         dir: PathBuf,
         line: Line,
+    },
+    /// The preview of the segment `track` is speaking now, or `None` when it is withdrawn
+    /// (the segment became a `LiveLine`, or the track went quiet).
+    LivePartial {
+        dir: PathBuf,
+        track: Track,
+        line: Option<Line>,
     },
     /// The live run for `dir` is over (stopped, failed, or never started: no model).
     LiveEnded {
@@ -273,6 +282,7 @@ struct LiveJob {
     precision: Precision,
     threads: usize,
     poll: Duration,
+    partial: bool,
 }
 
 enum Work {
@@ -383,6 +393,7 @@ impl Io {
                 precision,
                 threads,
                 poll_ms,
+                partial,
             } => {
                 let running_here = self.live.borrow().as_deref() == Some(dir.as_path());
                 let queued_here = self
@@ -398,6 +409,7 @@ impl Io {
                     precision,
                     threads,
                     poll: Duration::from_millis(poll_ms.max(10)),
+                    partial,
                 }));
             }
             Command::LiveStop => {
@@ -598,7 +610,7 @@ impl Worker {
                 }
                 match LiveTrack::open(&path, *track) {
                     Ok(t) => {
-                        tracks.push(t);
+                        tracks.push(if job.partial { t.with_partial() } else { t });
                         false
                     }
                     Err(_) => true,
@@ -617,6 +629,16 @@ impl Worker {
                     dir: job.dir.clone(),
                     line,
                 });
+            }
+            // After the lines, so a preview is withdrawn after the line that replaces it.
+            for t in &mut tracks {
+                if let Some(line) = t.take_partial_change() {
+                    io.emit(Event::LivePartial {
+                        dir: job.dir.clone(),
+                        track: t.track(),
+                        line,
+                    });
+                }
             }
             let until = Instant::now() + job.poll;
             loop {
@@ -1503,11 +1525,20 @@ mod tests {
         }
 
         fn live_start(&self, dir: &Path) {
+            self.live_start_with(dir, false);
+        }
+
+        fn live_start_partial(&self, dir: &Path) {
+            self.live_start_with(dir, true);
+        }
+
+        fn live_start_with(&self, dir: &Path, partial: bool) {
             self.h().send(Command::LiveStart {
                 dir: dir.to_path_buf(),
                 precision: Precision::Int8,
                 threads: 4,
                 poll_ms: 20,
+                partial,
             });
         }
 
@@ -1666,5 +1697,50 @@ mod tests {
         let t = Instant::now();
         drop(rig.h.take());
         assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    }
+
+    impl Rig {
+        fn wait_partial(&mut self, want_text: bool) -> Option<Line> {
+            match self.wait(
+                "a live partial",
+                |e| matches!(e, Event::LivePartial { line, .. } if line.is_some() == want_text),
+            ) {
+                Event::LivePartial { line, .. } => line,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn a_partial_comes_before_its_line_and_the_line_withdraws_it() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-partial");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0)]);
+        rig.live_start_partial(&dir);
+        let partial = rig.wait_partial(true).expect("a partial line");
+        assert_eq!(partial.track, Track::Mic);
+        assert!(partial.text.starts_with("call"), "{partial:?}");
+
+        append_wav(&dir.join("mic.wav"), &[quiet(1.5)]);
+        rig.wait_line(Track::Mic);
+        assert_eq!(rig.wait_partial(false), None, "withdrawn after the line");
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+    }
+
+    #[test]
+    fn without_the_partial_flag_no_partial_event_is_sent() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-no-partial");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0)]);
+        rig.live_start(&dir);
+        std::thread::sleep(Duration::from_millis(300));
+        rig.pull();
+        assert!(!rig
+            .events
+            .iter()
+            .any(|e| matches!(e, Event::LivePartial { .. })));
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
     }
 }

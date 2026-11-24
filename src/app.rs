@@ -387,6 +387,9 @@ impl AppState {
             // The job waits behind another; the panel keeps showing the running one.
             AsrEvent::Queued { .. } => {}
             AsrEvent::LiveLine { dir, line } => self.recorder.live_line(&dir, &line),
+            AsrEvent::LivePartial { dir, track, line } => {
+                self.recorder.live_partial(&dir, track, line.as_ref())
+            }
             AsrEvent::LiveEnded { dir } => {
                 if self.live_dir.as_deref() == Some(dir.as_path()) {
                     self.live_dir = None;
@@ -412,6 +415,7 @@ impl AppState {
             precision: t.precision,
             threads: t.threads(),
             poll_ms: crate::screens::settings::transcription::chunk_window_ms(t.chunk_window_idx),
+            partial: true,
         });
         self.live_dir = Some(dir);
     }
@@ -2216,6 +2220,41 @@ mod tests {
             "the final job is what can fail"
         );
         assert!(!a.recorder.live_on);
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// Like `growing_session`, but the speech has not ended yet (no trailing quiet).
+    fn speaking_session(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let speech: Vec<i16> = (0..48_000)
+            .map(|i| (0.3 * 32_767.0 * (i as f32 * 0.07).sin()) as i16)
+            .collect();
+        let file = std::fs::File::create(dir.join("system.wav")).unwrap();
+        let mut w = crate::audio::wav::WavWriter::new(file, 16_000).unwrap();
+        w.write_samples(&speech).unwrap();
+        w.flush_header().unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_partial_reaches_the_panel_and_goes_when_the_recording_is_saved() {
+        let base = crate::audio::temp_dir("app-live-partial");
+        let dir = speaking_session(&base, "rec1");
+        let mut a = ready_app(&base);
+        a.apply_audio_event(started(&dir));
+        wait_until(&mut a, "a partial", |a| {
+            !a.recorder.live_partials().is_empty()
+        });
+        assert_eq!(a.recorder.live_partials()[0].text, "hi");
+        assert!(
+            a.recorder.transcript_segments.is_empty(),
+            "not a final line yet"
+        );
+
+        a.apply_audio_event(saved(&dir));
+        assert!(a.recorder.live_partials().is_empty());
         drop(a);
         let _ = std::fs::remove_dir_all(base);
     }

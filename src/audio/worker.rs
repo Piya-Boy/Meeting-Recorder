@@ -23,7 +23,7 @@ use super::wav::WavWriter;
 
 /// Header sizes are rewritten this often (seconds of recorded audio) so a crash leaves
 /// playable files.
-const HEADER_FLUSH_SECS: u64 = 5;
+const HEADER_FLUSH_SECS: u64 = 1;
 /// A level is reported after this fraction of a second of audio (1/20 s = 50 ms).
 const LEVEL_DIVISOR: u32 = 20;
 /// A source that sent nothing for this long reads as silent in the meters.
