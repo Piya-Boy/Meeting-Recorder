@@ -2,6 +2,9 @@
 //! features, segmentation, the model and the worker.
 //! See docs/superpowers/specs/2026-11-24-asr-transcription-design.md.
 
+pub mod features;
+#[cfg(test)]
+mod features_reference;
 pub mod resample;
 pub mod thai;
 pub mod transcript;
