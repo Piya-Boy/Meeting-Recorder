@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::export::ExportFormat;
 use crate::i18n::tr;
 use crate::library;
 use egui::{RichText, Ui};
@@ -30,6 +31,7 @@ pub struct TranscriptEntry {
 pub enum TranscriptsRequest {
     Open(PathBuf),
     Copy(PathBuf),
+    Export(PathBuf, ExportFormat),
 }
 
 pub struct TranscriptsScreen {
@@ -279,12 +281,24 @@ pub fn draw_transcripts_screen(
                                 cells.cell(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                     // right-to-left: JSON, SRT, TXT, copy, Open
-                                    for fmt in ["JSON", "SRT", "TXT"] {
-                                        if mono_chip_button(ui, theme, fmt).clicked() {
-                                            toast::show(
-                                                ui.ctx(),
-                                                crate::i18n::export_not_wired(fmt),
-                                            );
+                                    for (label, format) in [
+                                        ("JSON", ExportFormat::Json),
+                                        ("SRT", ExportFormat::Srt),
+                                        ("TXT", ExportFormat::Txt),
+                                    ] {
+                                        if mono_chip_button(ui, theme, label).clicked() {
+                                            match &entry.dir {
+                                                Some(dir) if live => {
+                                                    request = Some(TranscriptsRequest::Export(
+                                                        dir.clone(),
+                                                        format,
+                                                    ))
+                                                }
+                                                _ => toast::show(
+                                                    ui.ctx(),
+                                                    crate::i18n::export_not_wired(label),
+                                                ),
+                                            }
                                         }
                                     }
                                     if icon_button(ui, theme, egui_phosphor::regular::COPY, 26.0)

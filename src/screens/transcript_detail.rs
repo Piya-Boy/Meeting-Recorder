@@ -21,12 +21,22 @@ pub struct TranscriptDetailScreen {
     pub articles: Vec<TranscriptArticle>,
     /// True once a real transcript is shown (read-only, with speakers).
     pub live: bool,
+    /// The recording's folder for a real transcript (the export buttons use it).
+    pub dir: Option<std::path::PathBuf>,
 }
 
 impl TranscriptDetailScreen {
     /// Shows a real transcript.
-    pub fn show_real(&mut self, title: String, date: String, duration: String, lines: &[Line]) {
+    pub fn show_real(
+        &mut self,
+        title: String,
+        date: String,
+        duration: String,
+        dir: std::path::PathBuf,
+        lines: &[Line],
+    ) {
         self.live = true;
+        self.dir = Some(dir);
         self.title = title;
         self.date = date;
         self.duration = duration;
@@ -46,6 +56,7 @@ impl Default for TranscriptDetailScreen {
     fn default() -> Self {
         Self {
             live: false,
+            dir: None,
             title: "Q4 Engineering Architecture Sync".to_owned(),
             date: "2026-11-23 09:30".to_owned(),
             duration: "00:42:18".to_owned(),
@@ -334,12 +345,22 @@ mod tests {
     }
 
     #[test]
+    fn show_real_remembers_the_folder_and_the_sample_has_none() {
+        assert_eq!(TranscriptDetailScreen::default().dir, None);
+        let mut s = TranscriptDetailScreen::default();
+        let dir = std::path::PathBuf::from("C:\\rec\\standup");
+        s.show_real("t".into(), "d".into(), "00:00:01".into(), dir.clone(), &[]);
+        assert_eq!(s.dir, Some(dir));
+    }
+
+    #[test]
     fn real_lines_become_timestamped_articles_with_speakers() {
         let mut s = TranscriptDetailScreen::default();
         s.show_real(
             "standup".into(),
             "2026-11-24 09:00".into(),
             "00:01:05".into(),
+            std::path::PathBuf::from("C:\\rec\\standup"),
             &[
                 line(Track::Mic, 0, "สวัสดีครับ"),
                 line(Track::System, 3_661_000, "ครับผม"),

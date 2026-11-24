@@ -542,6 +542,7 @@ impl AppState {
     fn handle_transcripts_request(&mut self, ctx: &egui::Context, request: TranscriptsRequest) {
         match request {
             TranscriptsRequest::Open(dir) => self.open_transcript(&dir),
+            TranscriptsRequest::Export(dir, format) => self.export_transcript(&dir, format),
             TranscriptsRequest::Copy(dir) => match crate::library::load_transcript(&dir) {
                 Ok(lines) => {
                     ctx.copy_text(crate::screens::transcript_detail::lines_text(&lines));
@@ -549,6 +550,33 @@ impl AppState {
                 }
                 Err(_) => self.asr_notice = Some("Could not open the transcript.".to_owned()),
             },
+        }
+    }
+
+    /// Writes the export file of a recording next to it and shows it in Explorer.
+    pub fn export_transcript(
+        &mut self,
+        dir: &std::path::Path,
+        format: crate::export::ExportFormat,
+    ) {
+        self.export_transcript_with(dir, format, reveal_in_explorer);
+    }
+
+    /// `export_transcript` with the "show the file" step passed in, so tests do not open Explorer.
+    fn export_transcript_with(
+        &mut self,
+        dir: &std::path::Path,
+        format: crate::export::ExportFormat,
+        reveal: impl FnOnce(&std::path::Path),
+    ) {
+        use crate::i18n::tr;
+        match crate::export::export_transcript(dir, format, tr("You"), tr("Others")) {
+            Ok(path) => {
+                reveal(&path);
+                self.asr_notice =
+                    Some("Exported. The file is in the recording's folder.".to_owned());
+            }
+            Err(_) => self.asr_notice = Some("Could not export the transcript.".to_owned()),
         }
     }
 
@@ -578,7 +606,7 @@ impl AppState {
             ),
         };
         self.transcript_detail
-            .show_real(title, date, duration, &lines);
+            .show_real(title, date, duration, dir.to_path_buf(), &lines);
         self.current_screen = Screen::TranscriptDetail;
     }
 
@@ -839,6 +867,30 @@ impl eframe::App for AppState {
 /// Shows a folder in Windows Explorer.
 fn open_in_explorer(dir: &std::path::Path) {
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
+}
+
+/// The argument that makes Explorer open a folder with `path` selected: `/select,"C:\a b\c"`.
+/// Explorer wants backslashes and the quotes inside one argument.
+fn explorer_select_arg(path: &std::path::Path) -> String {
+    format!(
+        "/select,\"{}\"",
+        path.display().to_string().replace('/', "\\")
+    )
+}
+
+/// Shows a file in Windows Explorer, selected in its folder.
+fn reveal_in_explorer(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("explorer")
+            .raw_arg(explorer_select_arg(path))
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    if let Some(dir) = path.parent() {
+        open_in_explorer(dir);
+    }
 }
 
 // ─── Main content area ───────────────────────────────────────────────────────
@@ -1647,5 +1699,43 @@ mod tests {
         assert_eq!(text.lines().count(), 2);
         assert!(text.contains("] ") && text.contains("เราจะทำงานนี้"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn exporting_a_real_transcript_reports_success_and_a_damaged_one_failure() {
+        let base = library_dir("app-export");
+        let dir = session_dir(&base, "2026-11-25_1000_done");
+        write_real_transcript(&dir);
+        let mut a = AppState::default();
+        let mut revealed: Vec<std::path::PathBuf> = Vec::new();
+        a.export_transcript_with(&dir, crate::export::ExportFormat::Srt, |p| {
+            revealed.push(p.to_path_buf())
+        });
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Exported. The file is in the recording's folder.")
+        );
+        assert!(dir.join("transcript.srt").is_file());
+        assert_eq!(revealed, vec![dir.join("transcript.srt")]);
+
+        let bad = session_dir(&base, "2026-11-25_1001_bad");
+        std::fs::write(bad.join("transcript.json"), "{ not json").unwrap();
+        revealed.clear();
+        a.export_transcript_with(&bad, crate::export::ExportFormat::Txt, |p| {
+            revealed.push(p.to_path_buf())
+        });
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Could not export the transcript.")
+        );
+        assert!(revealed.is_empty(), "nothing to show after a failure");
+        assert!(!bad.join("transcript.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn explorer_select_argument_quotes_the_path_and_uses_backslashes() {
+        let arg = explorer_select_arg(std::path::Path::new("C:/My Rec/2026 x/transcript.srt"));
+        assert_eq!(arg, "/select,\"C:\\My Rec\\2026 x\\transcript.srt\"");
     }
 }
