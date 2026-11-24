@@ -118,7 +118,7 @@ fn download_files(
     let zip_path = dir.join(zip_name);
     model::extract_zip(&zip_path, dir)?;
     fs::remove_file(&zip_path).map_err(|e| format!("cannot remove {zip_name}: {e}"))?;
-    model::mark_ready(dir).map_err(|e| format!("cannot finish the install: {e}"))
+    model::mark_ready(dir, &files[0].name).map_err(|e| format!("cannot finish the install: {e}"))
 }
 
 fn part_path(dest: &Path) -> PathBuf {

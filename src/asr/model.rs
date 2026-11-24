@@ -16,8 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const REVISION: &str = "9f142a43e4d35a422c1c7dac40772ef707387ebc";
 /// Where the files of `REVISION` are downloaded from (append `/<file name>`).
 pub const BASE_URL: &str = "https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming-ONNX/resolve/9f142a43e4d35a422c1c7dac40772ef707387ebc";
-/// Written after a download was verified and unpacked; `status` trusts it instead of hashing
-/// a 1 GB file on every start.
+/// Written after a download was verified and unpacked, holding the size of the weights file;
+/// `status` trusts it instead of hashing a 1 GB file on every start.
 pub const READY_MARKER: &str = "ready.ok";
 
 /// Weights of the model. int8 is the default: on this project's 10-clip check it was as
@@ -138,12 +138,19 @@ pub enum ModelStatus {
 }
 
 /// Whether the model of `p` is installed in `dir`: the marker of a verified install is there,
-/// the weights file has its full size and the other files exist. Never reads the weights.
+/// the weights file still has the size recorded in it and the other files exist. Never reads
+/// the weights.
 pub fn status(dir: &Path, p: Precision) -> ModelStatus {
-    let data = manifest(p)[0];
-    let data_ok = fs::metadata(dir.join(data.name)).is_ok_and(|m| m.len() == data.size);
-    let ready = dir.join(READY_MARKER).is_file()
-        && data_ok
+    let data = dir.join(manifest(p)[0].name);
+    let recorded = fs::read_to_string(dir.join(READY_MARKER))
+        .ok()
+        .and_then(|m| {
+            m.trim()
+                .strip_prefix("size=")
+                .and_then(|n| n.parse::<u64>().ok())
+        });
+    let data_ok = recorded.is_some() && fs::metadata(&data).ok().map(|m| m.len()) == recorded;
+    let ready = data_ok
         && encoder_path(dir, p).is_file()
         && decoder_path(dir).is_file()
         && tokens_path(dir).is_file();
@@ -154,9 +161,11 @@ pub fn status(dir: &Path, p: Precision) -> ModelStatus {
     }
 }
 
-/// Records that the files in `dir` were verified.
-pub fn mark_ready(dir: &Path) -> io::Result<()> {
-    fs::write(dir.join(READY_MARKER), b"ok")
+/// Records that the files in `dir` were verified: the marker holds the size of the weights
+/// file `data_name`, which `status` compares with the file as it is later.
+pub fn mark_ready(dir: &Path, data_name: &str) -> io::Result<()> {
+    let size = fs::metadata(dir.join(data_name))?.len();
+    fs::write(dir.join(READY_MARKER), format!("size={size}"))
 }
 
 /// SHA-256 of a file as lowercase hex; `None` when `cancel` was set while reading.
@@ -419,17 +428,15 @@ mod tests {
         assert!(extract_zip(&zip, &base).is_err());
     }
 
-    /// A model folder that looks installed, with a fake data file of the manifest's size
-    /// replaced by `data_len` bytes.
-    fn fake_install(dir: &std::path::Path, data_len: u64, marker: bool) {
+    /// A model folder that looks installed: a small fake weights file of `data_len` bytes.
+    fn fake_install(dir: &std::path::Path, data_len: usize, marker: bool) {
         std::fs::create_dir_all(dir).unwrap();
         for f in ["encoder.int8.onnx", "decoder_joint.onnx", "tokens.txt"] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
-        let data = std::fs::File::create(dir.join("encoder.int8.onnx.data")).unwrap();
-        data.set_len(data_len).unwrap();
+        std::fs::write(dir.join("encoder.int8.onnx.data"), vec![7u8; data_len]).unwrap();
         if marker {
-            mark_ready(dir).unwrap();
+            mark_ready(dir, "encoder.int8.onnx.data").unwrap();
         }
     }
 
@@ -446,28 +453,37 @@ mod tests {
     #[test]
     fn status_is_ready_for_a_marked_complete_install() {
         let dir = crate::audio::temp_dir("model-status-ready");
-        fake_install(&dir, 883_175_424, true);
+        fake_install(&dir, 5000, true);
         assert_eq!(status(&dir, Precision::Int8), ModelStatus::Ready);
     }
 
     #[test]
     fn status_needs_the_marker() {
         let dir = crate::audio::temp_dir("model-status-nomarker");
-        fake_install(&dir, 883_175_424, false);
+        fake_install(&dir, 5000, false);
         assert_eq!(status(&dir, Precision::Int8), ModelStatus::Missing);
     }
 
     #[test]
-    fn status_rejects_a_data_file_of_the_wrong_size() {
+    fn status_rejects_a_weights_file_that_changed_size() {
         let dir = crate::audio::temp_dir("model-status-size");
-        fake_install(&dir, 1000, true);
+        fake_install(&dir, 5000, true);
+        std::fs::write(dir.join("encoder.int8.onnx.data"), vec![7u8; 1000]).unwrap();
+        assert_eq!(status(&dir, Precision::Int8), ModelStatus::Missing);
+    }
+
+    #[test]
+    fn status_rejects_a_marker_without_a_size() {
+        let dir = crate::audio::temp_dir("model-status-oldmarker");
+        fake_install(&dir, 5000, true);
+        std::fs::write(dir.join(READY_MARKER), b"ok").unwrap();
         assert_eq!(status(&dir, Precision::Int8), ModelStatus::Missing);
     }
 
     #[test]
     fn status_rejects_a_missing_tokens_file() {
         let dir = crate::audio::temp_dir("model-status-tokens");
-        fake_install(&dir, 883_175_424, true);
+        fake_install(&dir, 5000, true);
         std::fs::remove_file(dir.join("tokens.txt")).unwrap();
         assert_eq!(status(&dir, Precision::Int8), ModelStatus::Missing);
     }
