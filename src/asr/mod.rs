@@ -6,6 +6,7 @@ pub mod features;
 #[cfg(test)]
 mod features_reference;
 pub mod resample;
+pub mod segment;
 pub mod thai;
 pub mod transcript;
 pub mod wavread;
