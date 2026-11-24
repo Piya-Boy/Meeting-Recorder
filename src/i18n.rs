@@ -252,7 +252,14 @@ const THAI: &[(&str, &str)] = &[
     ("UI Framework", "เฟรมเวิร์ก UI"),
     ("Verify checksum", "ตรวจสอบ checksum"),
     ("Checksum verification", "การตรวจสอบ checksum"),
-    ("Version 0.4.2 · Windows 11 x86_64", "เวอร์ชัน 0.4.2 · Windows 11 x86_64"),
+    ("Version", "เวอร์ชัน"),
+    ("Check for updates", "ตรวจหาเวอร์ชันใหม่"),
+    ("Asks GitHub once a day whether a newer version exists. No recording or personal data is sent.", "ถาม GitHub วันละครั้งว่ามีเวอร์ชันใหม่ไหม ไม่ส่งไฟล์บันทึกหรือข้อมูลส่วนตัวไปด้วย"),
+    ("Checking for updates...", "กำลังตรวจหาเวอร์ชันใหม่..."),
+    ("You have the latest version.", "คุณใช้เวอร์ชันล่าสุดอยู่แล้ว"),
+    ("Update available:", "มีเวอร์ชันใหม่:"),
+    ("Open download page", "เปิดหน้าดาวน์โหลด"),
+    ("Could not check for updates.", "ตรวจหาเวอร์ชันใหม่ไม่ได้"),
     ("Weekly", "รายสัปดาห์"),
     ("Win 11", "Win 11"),
     ("Words", "จำนวนคำ"),
@@ -476,5 +483,21 @@ mod tests {
         assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn update_texts_have_thai() {
+        for key in [
+            "Version",
+            "Check for updates",
+            "Asks GitHub once a day whether a newer version exists. No recording or personal data is sent.",
+            "Checking for updates...",
+            "You have the latest version.",
+            "Update available:",
+            "Open download page",
+            "Could not check for updates.",
+        ] {
+            assert!(has_thai(key), "missing Thai for {key:?}");
+        }
     }
 }

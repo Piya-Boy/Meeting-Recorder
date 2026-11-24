@@ -25,6 +25,7 @@ use crate::screens::{
 use crate::settings_store::{self, Persisted};
 use crate::shell;
 use crate::theme::{apply_theme, ThemeColors, ThemeMode};
+use crate::update::{self, UpdateNotice, UpdateState};
 
 // ─── Screen routing ─────────────────────────────────────────────────────────
 
@@ -156,6 +157,27 @@ pub struct AppState {
     /// Starts a player on a folder; tests replace it with one that uses a fake device.
     player_start: fn(&std::path::Path) -> crate::playback::PlayerHandle,
 
+    /// What the update check found (the sidebar and Settings > Advanced show it).
+    pub update: UpdateState,
+    /// The running check's answer, once it comes.
+    update_rx: Option<std::sync::mpsc::Receiver<Result<update::Check, String>>>,
+    /// The running check was asked for by the user (it always answers with a toast).
+    update_manual: bool,
+    /// One-shot text for a toast about the check (taken once per frame).
+    update_notice: Option<UpdateNotice>,
+    /// Seconds since 1970 of the last answer from GitHub (0 = never).
+    update_last_check: u64,
+    /// The GitHub API address (a dev flag points it at a local server).
+    update_api: String,
+    /// A dev flag asked for a check at start-up even in a preview run.
+    update_forced: bool,
+    /// The start-up check has run (it runs once per run).
+    update_started: bool,
+    /// Asks GitHub; tests replace it.
+    update_fetch: update::Fetch,
+    /// Opens a web page; tests replace it.
+    update_open: fn(&str),
+
     /// Whether preference changes are written to disk (off for dev-flag runs and tests).
     persist: bool,
     saved: Persisted,
@@ -191,6 +213,16 @@ impl Default for AppState {
             live_dir: None,
             player: None,
             player_start: crate::playback::PlayerHandle::start,
+            update: UpdateState::Idle,
+            update_rx: None,
+            update_manual: false,
+            update_notice: None,
+            update_last_check: 0,
+            update_api: update::API.to_owned(),
+            update_forced: false,
+            update_started: false,
+            update_fetch: update::check,
+            update_open: open_in_browser,
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
@@ -231,6 +263,9 @@ impl AppState {
                     }),
                     _ => None,
                 };
+            } else if let Some(base) = arg.strip_prefix("--update-url=") {
+                state.update_api = base.to_owned();
+                state.update_forced = true;
             } else if let Some(mode) = arg.strip_prefix("--theme=") {
                 match mode {
                     "light" => state.theme_mode = ThemeMode::Light,
@@ -286,6 +321,8 @@ impl AppState {
         self.settings_transcription.language_idx =
             crate::asr::engine::Language::from_code(&saved.asr_language).index();
         self.settings_transcription.glossary_text = saved.asr_glossary.join("\n");
+        self.settings_general.check_updates = saved.update_check;
+        self.update_last_check = saved.update_last_check;
         self.saved = self.snapshot();
         self.persist = true;
     }
@@ -312,6 +349,126 @@ impl AppState {
                 .filter(|l| !l.is_empty())
                 .map(str::to_owned)
                 .collect(),
+            update_check: self.settings_general.check_updates,
+            update_last_check: self.update_last_check,
+        }
+    }
+
+    /// Starts a check; `manual` = the user asked, so the answer is always shown.
+    pub fn start_update_check(&mut self, manual: bool) {
+        if self.update_rx.is_some() {
+            self.update_manual |= manual;
+            return;
+        }
+        self.update_manual = manual;
+        // A version that was already found stays on screen while the check runs again.
+        if !matches!(self.update, UpdateState::Available(_)) {
+            self.update = UpdateState::Checking;
+        }
+        self.update_rx = Some(update::spawn(
+            self.update_fetch,
+            self.update_api.clone(),
+            update::VERSION.to_owned(),
+        ));
+    }
+
+    /// The check at start-up: only in a real run (or one a dev flag asked for), with the switch
+    /// on, a day after the last good answer, once per run.
+    pub fn maybe_start_update_check(&mut self, now: u64) {
+        if self.update_started || self.update_rx.is_some() || !(self.persist || self.update_forced)
+        {
+            return;
+        }
+        let last = if self.update_forced {
+            0
+        } else {
+            self.update_last_check
+        };
+        if update::due(self.settings_general.check_updates, last, now) {
+            self.update_started = true;
+            self.start_update_check(false);
+        }
+    }
+
+    /// Takes the answer of the running check if it has come.
+    pub fn poll_update(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(rx) = &self.update_rx else {
+            return;
+        };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("the check stopped".to_owned()),
+        };
+        self.update_rx = None;
+        let manual = std::mem::take(&mut self.update_manual);
+        match result {
+            Ok(update::Check::Available(release)) => {
+                self.update_last_check = update::now_secs();
+                self.update_notice = Some(UpdateNotice::Available(release.version.clone()));
+                self.update = UpdateState::Available(release);
+            }
+            Ok(update::Check::UpToDate) => {
+                self.update_last_check = update::now_secs();
+                self.update = UpdateState::UpToDate;
+                if manual {
+                    self.update_notice = Some(UpdateNotice::UpToDate);
+                }
+            }
+            Err(_) => {
+                if manual {
+                    self.update_notice = Some(UpdateNotice::Failed);
+                }
+                if !matches!(self.update, UpdateState::Available(_)) {
+                    self.update = if manual {
+                        UpdateState::Failed
+                    } else {
+                        UpdateState::Idle
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn take_update_notice(&mut self) -> Option<UpdateNotice> {
+        self.update_notice.take()
+    }
+
+    /// Opens the release page of the version that was found (only a link the app built itself).
+    pub fn open_update_page(&mut self) {
+        let open = self.update_open;
+        if let UpdateState::Available(release) = &self.update {
+            if update::is_safe_release_url(&release.url) {
+                open(&release.url);
+            }
+        }
+    }
+
+    /// Per frame: the start-up check, the Settings buttons, the answer and its toast.
+    fn sync_update(&mut self, ctx: &egui::Context) {
+        self.maybe_start_update_check(update::now_secs());
+        if std::mem::take(&mut self.settings_advanced.check_requested) {
+            self.start_update_check(true);
+        }
+        if std::mem::take(&mut self.settings_advanced.open_requested) {
+            self.open_update_page();
+        }
+        self.poll_update();
+        self.settings_advanced.update = self.update.clone();
+        if self.update_rx.is_some() {
+            // The answer does not wake egui by itself.
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        if let Some(notice) = self.take_update_notice() {
+            let text = match notice {
+                UpdateNotice::Available(version) => {
+                    format!("{} v{version}", tr("Update available:"))
+                }
+                UpdateNotice::UpToDate => tr("You have the latest version.").to_owned(),
+                UpdateNotice::Failed => tr("Could not check for updates.").to_owned(),
+            };
+            crate::toast::show(ctx, text);
         }
     }
 
@@ -925,6 +1082,7 @@ impl eframe::App for AppState {
         self.sync_asr();
         self.sync_library(ctx);
         self.sync_player(ctx);
+        self.sync_update(ctx);
         if let Some(notice) = self.take_asr_notice() {
             crate::toast::show(ctx, crate::i18n::tr(&notice));
         }
@@ -1032,6 +1190,11 @@ impl eframe::App for AppState {
 }
 
 /// Shows a folder in Windows Explorer.
+/// Opens a web page in the default browser (the caller passes only links it built itself).
+fn open_in_browser(url: &str) {
+    let _ = std::process::Command::new("explorer").arg(url).spawn();
+}
+
 fn open_in_explorer(dir: &std::path::Path) {
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
 }
@@ -2313,5 +2476,216 @@ mod tests {
             vec!["มอล = มอก.", "x = y"],
             "blank lines are not kept"
         );
+    }
+
+    // ---- update check ------------------------------------------------------------------
+
+    use crate::update::{Check, Release};
+
+    fn fake_available(_api: &str, _current: &str) -> Result<Check, String> {
+        Ok(Check::Available(Release {
+            version: "9.9.9".to_owned(),
+            url: crate::update::release_url("9.9.9"),
+        }))
+    }
+
+    fn fake_up_to_date(_api: &str, _current: &str) -> Result<Check, String> {
+        Ok(Check::UpToDate)
+    }
+
+    fn fake_offline(_api: &str, _current: &str) -> Result<Check, String> {
+        Err("offline".to_owned())
+    }
+
+    fn update_app(fetch: crate::update::Fetch) -> AppState {
+        AppState {
+            update_fetch: fetch,
+            ..AppState::default()
+        }
+    }
+
+    fn wait_update(a: &mut AppState, what: &str) {
+        let t = std::time::Instant::now();
+        while a.update == UpdateState::Checking {
+            a.poll_update();
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "timed out waiting for {what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn an_automatic_check_that_finds_a_version_keeps_it_and_announces_it_once() {
+        let mut a = update_app(fake_available);
+        a.start_update_check(false);
+        assert_eq!(a.update, UpdateState::Checking);
+        wait_update(&mut a, "the answer");
+        let found = Release {
+            version: "9.9.9".to_owned(),
+            url: crate::update::release_url("9.9.9"),
+        };
+        assert_eq!(a.update, UpdateState::Available(found));
+        assert_eq!(
+            a.take_update_notice(),
+            Some(UpdateNotice::Available("9.9.9".to_owned()))
+        );
+        assert_eq!(a.take_update_notice(), None, "taken once");
+        assert!(a.update_last_check > 0, "a good answer records the time");
+    }
+
+    #[test]
+    fn a_check_from_settings_always_answers() {
+        let mut a = update_app(fake_up_to_date);
+        a.start_update_check(true);
+        wait_update(&mut a, "up to date");
+        assert_eq!(a.update, UpdateState::UpToDate);
+        assert_eq!(a.take_update_notice(), Some(UpdateNotice::UpToDate));
+
+        let mut a = update_app(fake_offline);
+        a.start_update_check(true);
+        wait_update(&mut a, "offline");
+        assert_eq!(a.update, UpdateState::Failed);
+        assert_eq!(a.take_update_notice(), Some(UpdateNotice::Failed));
+        assert_eq!(a.update_last_check, 0, "a failed check is not recorded");
+    }
+
+    #[test]
+    fn a_failed_recheck_keeps_the_version_that_was_found() {
+        let found = Release {
+            version: "9.9.9".to_owned(),
+            url: crate::update::release_url("9.9.9"),
+        };
+        let mut a = update_app(fake_offline);
+        a.update = UpdateState::Available(found.clone());
+        a.start_update_check(true);
+        let t = std::time::Instant::now();
+        while a.update_rx.is_some() {
+            a.poll_update();
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(a.update, UpdateState::Available(found), "the link stays");
+        assert_eq!(a.take_update_notice(), Some(UpdateNotice::Failed));
+    }
+
+    #[test]
+    fn an_automatic_check_that_finds_nothing_or_fails_stays_quiet() {
+        let mut a = update_app(fake_up_to_date);
+        a.start_update_check(false);
+        wait_update(&mut a, "up to date");
+        assert_eq!(a.take_update_notice(), None);
+        assert!(a.update_last_check > 0);
+
+        let mut a = update_app(fake_offline);
+        a.start_update_check(false);
+        wait_update(&mut a, "offline");
+        assert_eq!(
+            a.update,
+            UpdateState::Idle,
+            "no error is shown for a check nobody asked for"
+        );
+        assert_eq!(a.take_update_notice(), None);
+        assert_eq!(a.update_last_check, 0);
+    }
+
+    #[test]
+    fn the_startup_check_needs_persistence_the_switch_and_a_day_and_runs_once() {
+        let now = 1_800_000_000;
+        // preview runs and tests never touch the network
+        let mut a = update_app(fake_up_to_date);
+        a.maybe_start_update_check(now);
+        assert_eq!(a.update, UpdateState::Idle);
+
+        let saved = |check: bool, last: u64| Persisted {
+            update_check: check,
+            update_last_check: last,
+            ..Persisted::default()
+        };
+        for (check, last, why) in [
+            (false, 0, "switch off"),
+            (true, now - 100, "checked an hour ago"),
+        ] {
+            let mut a = update_app(fake_up_to_date);
+            a.enable_persistence(saved(check, last));
+            a.maybe_start_update_check(now);
+            assert_eq!(a.update, UpdateState::Idle, "{why}");
+        }
+
+        let mut a = update_app(fake_up_to_date);
+        a.enable_persistence(saved(true, 0));
+        a.maybe_start_update_check(now);
+        assert_eq!(a.update, UpdateState::Checking);
+        wait_update(&mut a, "the startup check");
+        a.update = UpdateState::Idle;
+        a.update_last_check = 0;
+        a.maybe_start_update_check(now);
+        assert_eq!(a.update, UpdateState::Idle, "once per run");
+    }
+
+    #[test]
+    fn a_dev_update_url_makes_a_preview_run_check_that_server() {
+        let mut a = AppState::from_args(["--update-url=http://127.0.0.1:9".to_owned()].into_iter());
+        assert_eq!(a.update_api, "http://127.0.0.1:9");
+        a.update_fetch = fake_available;
+        a.maybe_start_update_check(1_800_000_000);
+        assert_eq!(a.update, UpdateState::Checking);
+        wait_update(&mut a, "the dev check");
+        assert!(matches!(a.update, UpdateState::Available(_)));
+    }
+
+    static OPENED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    fn record_open(url: &str) {
+        OPENED.lock().unwrap().push(url.to_owned());
+    }
+
+    #[test]
+    fn the_download_page_opens_only_the_link_the_app_built() {
+        let mut a = AppState {
+            update_open: record_open,
+            ..AppState::default()
+        };
+        a.open_update_page();
+        assert!(
+            OPENED.lock().unwrap().is_empty(),
+            "nothing found, nothing opened"
+        );
+        a.update = UpdateState::Available(Release {
+            version: "9.9.9".to_owned(),
+            url: "https://evil.example/".to_owned(),
+        });
+        a.open_update_page();
+        assert!(
+            OPENED.lock().unwrap().is_empty(),
+            "a foreign link is refused"
+        );
+        let url = crate::update::release_url("9.9.9");
+        a.update = UpdateState::Available(Release {
+            version: "9.9.9".to_owned(),
+            url: url.clone(),
+        });
+        a.open_update_page();
+        assert_eq!(*OPENED.lock().unwrap(), vec![url]);
+    }
+
+    #[test]
+    fn update_settings_are_saved_and_restored() {
+        let mut a = AppState::default();
+        assert!(a.settings_general.check_updates, "on by default");
+        a.enable_persistence(Persisted {
+            update_check: false,
+            update_last_check: 1_764_000_000,
+            ..Persisted::default()
+        });
+        assert!(!a.settings_general.check_updates);
+        assert_eq!(a.update_last_check, 1_764_000_000);
+        let p = a.snapshot();
+        assert!(!p.update_check);
+        assert_eq!(p.update_last_check, 1_764_000_000);
     }
 }

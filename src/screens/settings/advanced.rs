@@ -2,13 +2,21 @@ use egui::{RichText, Ui};
 
 use super::{card, field, page, path_field, row_styled, section_title};
 use crate::components::button::{compact_button, custom_button, ButtonVariant};
+use crate::i18n::tr;
 use crate::theme::ThemeColors;
 use crate::toast;
+use crate::update::UpdateState;
 
 pub struct SettingsAdvancedScreen {
     pub log_dir: String,
     pub model_cache_info: String,
     pub perf_info: String,
+    /// Mirrors the app's update check (synced by the app each frame).
+    pub update: UpdateState,
+    /// Set by the "Check for updates" button; taken by the app.
+    pub check_requested: bool,
+    /// Set by the "Open download page" button; taken by the app.
+    pub open_requested: bool,
 }
 
 impl Default for SettingsAdvancedScreen {
@@ -17,12 +25,26 @@ impl Default for SettingsAdvancedScreen {
             log_dir: "C:\\Users\\Nattapong\\AppData\\Local\\MeetingRecorder\\logs".to_owned(),
             model_cache_info: "642.0 MB · OpenThai ASR ONNX weights".to_owned(),
             perf_info: "UI: 60 FPS (egui) · WASAPI buffer: 10 ms · Memory: 312 MB".to_owned(),
+            update: UpdateState::Idle,
+            check_requested: false,
+            open_requested: false,
         }
     }
 }
 
 fn not_wired(ui: &Ui, what: &str) {
     toast::show(ui.ctx(), crate::i18n::not_wired(what));
+}
+
+/// The line under the version: what the update check found (nothing before the first check).
+fn update_line(state: &UpdateState) -> Option<String> {
+    Some(match state {
+        UpdateState::Idle => return None,
+        UpdateState::Checking => tr("Checking for updates...").to_owned(),
+        UpdateState::UpToDate => tr("You have the latest version.").to_owned(),
+        UpdateState::Available(r) => format!("{} v{}", tr("Update available:"), r.version),
+        UpdateState::Failed => tr("Could not check for updates.").to_owned(),
+    })
 }
 
 pub fn draw_settings_advanced(
@@ -122,9 +144,13 @@ pub fn draw_settings_advanced(
                                 .color(theme.on_surface),
                         );
                         ui.label(
-                            RichText::new(crate::i18n::tr("Version 0.4.2 · Windows 11 x86_64"))
-                                .font(egui::FontId::monospace(12.0))
-                                .color(theme.on_surface_variant),
+                            RichText::new(format!(
+                                "{} {} · Windows 11 x86_64",
+                                tr("Version"),
+                                crate::update::VERSION
+                            ))
+                            .font(egui::FontId::monospace(12.0))
+                            .color(theme.on_surface_variant),
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -140,6 +166,44 @@ pub fn draw_settings_advanced(
                             not_wired(ui, "The licenses viewer");
                         }
                     });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    let checking = screen.update == UpdateState::Checking;
+                    ui.add_enabled_ui(!checking, |ui| {
+                        if compact_button(
+                            ui,
+                            theme,
+                            None,
+                            "Check for updates",
+                            ButtonVariant::Secondary,
+                        )
+                        .clicked()
+                        {
+                            screen.check_requested = true;
+                        }
+                    });
+                    if matches!(screen.update, UpdateState::Available(_))
+                        && compact_button(
+                            ui,
+                            theme,
+                            None,
+                            "Open download page",
+                            ButtonVariant::Primary,
+                        )
+                        .clicked()
+                    {
+                        screen.open_requested = true;
+                    }
+                    if let Some(line) = update_line(&screen.update) {
+                        let color = match screen.update {
+                            UpdateState::Available(_) => theme.primary,
+                            UpdateState::Failed => theme.warning_text,
+                            _ => theme.on_surface_variant,
+                        };
+                        ui.label(RichText::new(line).size(12.0).color(color));
+                    }
                 });
 
                 let specs = [

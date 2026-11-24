@@ -45,6 +45,7 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 - **Frameless window** with a custom title bar, drag, edge and corner resize, minimise, maximise and close, and rounded corners on Windows 11. Minimum size is 1200 x 760.
 - **Themes:** dark, light and system, with three accent colours and four font scales. Light theme uses darker text-only colours for legibility.
 - **Languages:** the whole interface switches between English and Thai from Settings > General. Text without a Thai translation falls back to English.
+- **Update check:** once a day (Settings > General, can be turned off) and from Settings > Advanced the app asks GitHub Releases whether a newer version exists and says so; it does not install anything.
 - **Fonts:** Inter, JetBrains Mono and Noto Sans Thai are bundled, so Thai renders correctly on any machine.
 - **Preferences** (theme, accent, font scale, language and the general toggles) are saved when they change and restored on the next launch.
 - **Keyboard:** global shortcuts and a visible focus ring when navigating with Tab.

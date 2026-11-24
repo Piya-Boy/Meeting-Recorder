@@ -90,10 +90,36 @@ pub fn draw_sidebar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                 state.open_modal = Some(Modal::About);
             }
             if !collapsed {
+                let found = match &state.update {
+                    crate::update::UpdateState::Available(r) => Some(r.version.clone()),
+                    _ => None,
+                };
+                if let Some(version) = found {
+                    let link = ui
+                        .horizontal(|ui| {
+                            ui.add_space(12.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!(
+                                        "{} v{version}",
+                                        tr("Update available:")
+                                    ))
+                                    .size(11.0)
+                                    .color(theme.primary),
+                                )
+                                .sense(egui::Sense::click()),
+                            )
+                        })
+                        .inner
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if link.clicked() {
+                        state.open_update_page();
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
                     ui.label(
-                        RichText::new("v0.4.2")
+                        RichText::new(format!("v{}", crate::update::VERSION))
                             .font(egui::FontId::monospace(12.0))
                             .color(theme.on_surface_variant),
                     );

@@ -18,6 +18,7 @@ pub struct SettingsGeneralScreen {
     pub start_with_windows: bool,
     pub minimize_to_tray: bool,
     pub confirm_delete: bool,
+    pub check_updates: bool,
 }
 
 impl Default for SettingsGeneralScreen {
@@ -27,6 +28,7 @@ impl Default for SettingsGeneralScreen {
             start_with_windows: false,
             minimize_to_tray: true,
             confirm_delete: true,
+            check_updates: true,
         }
     }
 }
@@ -75,6 +77,16 @@ pub fn draw_settings_general(ui: &mut Ui, screen: &mut SettingsGeneralScreen, th
                     40.0,
                     |ui| {
                         toggle_switch(ui, theme, &mut screen.confirm_delete);
+                    },
+                );
+                row(
+                    ui,
+                    theme,
+                    "Check for updates",
+                    Some("Asks GitHub once a day whether a newer version exists. No recording or personal data is sent."),
+                    40.0,
+                    |ui| {
+                        toggle_switch(ui, theme, &mut screen.check_updates);
                     },
                 );
             });

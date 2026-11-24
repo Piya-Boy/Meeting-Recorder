@@ -13,6 +13,7 @@ mod settings_store;
 mod shell;
 mod theme;
 mod toast;
+mod update;
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()

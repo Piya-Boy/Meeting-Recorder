@@ -98,9 +98,12 @@ fn help_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
 fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
     heading(ui, theme, tr("About Meeting Recorder"));
     ui.label(
-        RichText::new("Meeting Recorder v0.4.2 (x86_64 Windows 11)")
-            .font(egui::FontId::monospace(12.0))
-            .color(theme.on_surface),
+        RichText::new(format!(
+            "Meeting Recorder v{} (x86_64 Windows 11)",
+            crate::update::VERSION
+        ))
+        .font(egui::FontId::monospace(12.0))
+        .color(theme.on_surface),
     );
     ui.add(
         egui::Label::new(

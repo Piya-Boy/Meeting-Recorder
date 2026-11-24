@@ -28,6 +28,10 @@ pub struct Persisted {
     pub asr_language: String,
     /// Word fixes, one rule a line (see `asr::glossary`).
     pub asr_glossary: Vec<String>,
+    /// Ask GitHub for a newer version at start-up.
+    pub update_check: bool,
+    /// Seconds since 1970 of the last answer from GitHub (0 = never).
+    pub update_last_check: u64,
 }
 
 impl Default for Persisted {
@@ -46,6 +50,8 @@ impl Default for Persisted {
             asr_threads: 4,
             asr_language: "th".to_owned(),
             asr_glossary: Vec::new(),
+            update_check: true,
+            update_last_check: 0,
         }
     }
 }
@@ -78,6 +84,10 @@ impl Persisted {
         for rule in &self.asr_glossary {
             text.push_str(&format!("asr.glossary={rule}\n"));
         }
+        text.push_str(&format!(
+            "update.check={}\nupdate.last_check={}\n",
+            self.update_check, self.update_last_check
+        ));
         text
     }
 
@@ -112,6 +122,12 @@ impl Persisted {
                 "asr.language" => {
                     if matches!(value, "th" | "th-en") {
                         out.asr_language = value.to_owned();
+                    }
+                }
+                "update.check" => set_bool(&mut out.update_check, value),
+                "update.last_check" => {
+                    if let Ok(n) = value.parse::<u64>() {
+                        out.update_last_check = n;
                     }
                 }
                 "asr.glossary" => {
@@ -203,6 +219,8 @@ mod tests {
             asr_threads: 6,
             asr_language: "th".to_owned(),
             asr_glossary: Vec::new(),
+            update_check: true,
+            update_last_check: 0,
         };
         assert_eq!(Persisted::from_text(&s.to_text()), s);
     }
@@ -289,5 +307,30 @@ mod tests {
         let s = Persisted::from_text("theme=light\nasr.language=xx\n");
         assert_eq!(s.asr_language, "th");
         assert!(s.asr_glossary.is_empty());
+    }
+
+    #[test]
+    fn update_settings_round_trip() {
+        let s = Persisted {
+            update_check: false,
+            update_last_check: 1_764_000_000,
+            ..Persisted::default()
+        };
+        let text = s.to_text();
+        assert!(text.contains("update.check=false\n"), "{text}");
+        assert!(text.contains("update.last_check=1764000000\n"), "{text}");
+        assert_eq!(Persisted::from_text(&text), s);
+    }
+
+    #[test]
+    fn missing_or_bad_update_settings_keep_the_defaults() {
+        for text in [
+            "theme=light\n",
+            "update.check=maybe\nupdate.last_check=abc\n",
+        ] {
+            let s = Persisted::from_text(text);
+            assert!(s.update_check, "{text:?}");
+            assert_eq!(s.update_last_check, 0, "{text:?}");
+        }
     }
 }
