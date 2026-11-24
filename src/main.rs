@@ -3,6 +3,8 @@ mod asr;
 mod audio;
 mod branding;
 mod components;
+#[allow(dead_code)] // wired to the buttons in the next task
+mod export;
 mod i18n;
 mod library;
 mod modals;

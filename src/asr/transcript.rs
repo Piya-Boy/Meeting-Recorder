@@ -110,11 +110,16 @@ pub fn to_json(t: &Transcript) -> String {
 
 /// The `transcript.txt` text: `[hh:mm:ss] <label>: <text>` per line.
 pub fn to_text(t: &Transcript, you: &str, others: &str) -> String {
-    if t.lines.is_empty() {
+    lines_to_text(&t.lines, you, others)
+}
+
+/// The same text for a bare list of lines.
+pub fn lines_to_text(lines: &[Line], you: &str, others: &str) -> String {
+    if lines.is_empty() {
         return "No speech found.\n".to_owned();
     }
     let mut out = String::new();
-    for l in &t.lines {
+    for l in lines {
         let who = match l.track {
             Track::Mic => you,
             Track::System => others,
@@ -129,7 +134,7 @@ pub fn to_text(t: &Transcript, you: &str, others: &str) -> String {
     out
 }
 
-fn write_atomic(dir: &Path, name: &str, content: &str) -> io::Result<()> {
+pub(crate) fn write_atomic(dir: &Path, name: &str, content: &str) -> io::Result<()> {
     let tmp = dir.join(format!("{name}.tmp"));
     let result = (|| {
         let mut f = fs::File::create(&tmp)?;

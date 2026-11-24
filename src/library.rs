@@ -16,13 +16,15 @@ const MIC: &str = "mic.wav";
 const SYSTEM: &str = "system.wav";
 const TRANSCRIPT_JSON: &str = "transcript.json";
 /// Files the app writes into a session folder; `delete_session` removes only these.
-const OWN_FILES: [&str; 6] = [
+const OWN_FILES: [&str; 8] = [
     MIC,
     SYSTEM,
     TRANSCRIPT_JSON,
     "transcript.txt",
+    "transcript.srt",
     "transcript.json.tmp",
     "transcript.txt.tmp",
+    "transcript.srt.tmp",
 ];
 const PREVIEW_CHARS: usize = 80;
 
@@ -466,6 +468,28 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!((lines[0].track, lines[0].start_ms), (Track::System, 1500));
         assert_eq!(lines[1].text, "ข");
+    }
+
+    #[test]
+    fn delete_removes_an_exported_srt() {
+        let t = Tmp::new();
+        let d = t.dir("2026-11-24_1000_x");
+        wav(&d.join("mic.wav"), 1);
+        write_transcript(&d, vec![line(Track::Mic, 0, "ก")]);
+        fs::write(
+            d.join("transcript.srt"),
+            "1
+",
+        )
+        .unwrap();
+        fs::write(
+            d.join("transcript.srt.tmp"),
+            "1
+",
+        )
+        .unwrap();
+        delete_session(&t.0, &d).unwrap();
+        assert!(!d.exists(), "folder and every file the app wrote are gone");
     }
 
     #[test]
