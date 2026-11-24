@@ -15,3 +15,4 @@ pub mod segment;
 pub mod thai;
 pub mod transcript;
 pub mod wavread;
+pub mod worker;
