@@ -4,6 +4,7 @@
 pub mod clock;
 pub mod naming;
 pub mod procfind;
+pub mod session;
 pub mod wav;
 
 /// Unique, freshly created directory under the system temp dir, for tests.
