@@ -20,7 +20,7 @@ _None._
   - Acceptance Criteria: partial and final lines appear while recording; Settings "Partial transcription" and "Streaming chunk window" take effect (today they are shown but do nothing).
   - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
 - [ ] Task: Library follow-ups (open items of the real-data work)
-  - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality (see the playback entry under Completed).
+  - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
   - Editing transcript text on the detail page (read-only for now).
   - Export: choosing the destination (exports go next to the recording; a Save dialog would need the `rfd` crate and a thread) and WebVTT / DOCX.
   - A folder added or removed outside the app (Explorer) appears only when the screen is opened again: no folder watch and no refresh button.
