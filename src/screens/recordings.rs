@@ -39,11 +39,37 @@ pub enum RecordingStatus {
 }
 
 /// What a row button asks the app to do (taken once per frame).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RecordingsRequest {
     OpenTranscript(PathBuf),
     Transcribe(PathBuf),
     OpenFolder(PathBuf),
+    /// Play, pause or resume this recording (starts it if another one is playing).
+    TogglePlay(PathBuf),
+    /// Move the player to this fraction (0..=1) of the recording.
+    Seek(f32),
+    StopPlayback,
+}
+
+/// What the bottom player bar shows for the recording that is loaded in the player.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerView {
+    pub dir: PathBuf,
+    pub name: String,
+    pub playing: bool,
+    pub position_s: f32,
+    pub total_s: f32,
+}
+
+impl PlayerView {
+    /// How far into the recording the player is, 0..=1 (0 while the length is unknown).
+    pub fn fraction(&self) -> f32 {
+        if self.total_s <= 0.0 {
+            0.0
+        } else {
+            (self.position_s / self.total_s).clamp(0.0, 1.0)
+        }
+    }
 }
 
 impl RecordingStatus {
@@ -74,6 +100,10 @@ pub struct RecordingsScreen {
     pub processing: Option<(PathBuf, u8)>,
     /// Set by a row button; taken by the app.
     pub request: Option<RecordingsRequest>,
+    /// The loaded player, copied from the app every frame (live mode only).
+    pub player: Option<PlayerView>,
+    /// Fraction under the pointer while the seek bar is being dragged.
+    seeking: Option<f32>,
     entries: Vec<library::Entry>,
 }
 
@@ -184,6 +214,8 @@ impl Default for RecordingsScreen {
             loaded: true,
             processing: None,
             request: None,
+            player: None,
+            seeking: None,
             entries: Vec::new(),
             recordings: vec![
                 RecordingEntry {
@@ -277,7 +309,12 @@ pub fn draw_recordings_screen(
 
     // Playback bar pinned to the bottom (hidden in the empty state).
     let showing_list = !(screen.show_empty || screen.recordings.is_empty());
-    if showing_list && !screen.live && screen.playback_id.is_some() {
+    let bar_visible = if screen.live {
+        screen.player.is_some()
+    } else {
+        screen.playback_id.is_some()
+    };
+    if showing_list && bar_visible {
         egui::TopBottomPanel::bottom("recordings_playback")
             .resizable(false)
             .show_separator_line(false)
@@ -562,6 +599,29 @@ fn draw_recordings_table(
                                 {
                                     request = Some(RecordingsRequest::OpenFolder(dir.clone()));
                                 }
+                                let playing_this = screen
+                                    .player
+                                    .as_ref()
+                                    .is_some_and(|p| p.playing && &p.dir == dir);
+                                let (icon, variant, hint) = if playing_this {
+                                    (
+                                        egui_phosphor::regular::PAUSE,
+                                        ButtonVariant::Primary,
+                                        tr("Pause"),
+                                    )
+                                } else {
+                                    (
+                                        egui_phosphor::regular::PLAY,
+                                        ButtonVariant::Secondary,
+                                        tr("Play"),
+                                    )
+                                };
+                                if sized_icon_button(ui, theme, icon, 26.0, variant)
+                                    .on_hover_text(hint)
+                                    .clicked()
+                                {
+                                    request = Some(RecordingsRequest::TogglePlay(dir.clone()));
+                                }
                                 return;
                             }
                             let (icon, variant) = if is_playing {
@@ -659,11 +719,20 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
     const GAP_MD: f32 = 12.0;
     const MID_MAX: f32 = 576.0;
 
-    let title = screen
-        .playback_id
-        .and_then(|id| screen.recordings.iter().find(|e| e.id == id))
-        .map(|e| e.display_name.clone())
-        .unwrap_or_default();
+    let live_view = if screen.live {
+        screen.player.clone()
+    } else {
+        None
+    };
+    let mut request: Option<RecordingsRequest> = None;
+    let title = match &live_view {
+        Some(v) => v.name.clone(),
+        None => screen
+            .playback_id
+            .and_then(|id| screen.recordings.iter().find(|e| e.id == id))
+            .map(|e| e.display_name.clone())
+            .unwrap_or_default(),
+    };
 
     let title_font = egui::FontId::new(14.0, crate::theme::bold_family());
     let mono = egui::FontId::monospace(12.0);
@@ -702,16 +771,17 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
 
                 // Left: play/pause + title
                 ui.spacing_mut().item_spacing.x = GAP_MD;
-                if sized_icon_button(
-                    ui,
-                    theme,
-                    egui_phosphor::regular::PAUSE,
-                    BTN,
-                    ButtonVariant::Primary,
-                )
-                .clicked()
-                {
-                    screen.playback_id = None;
+                let playing_now = live_view.as_ref().is_none_or(|v| v.playing);
+                let icon = if playing_now {
+                    egui_phosphor::regular::PAUSE
+                } else {
+                    egui_phosphor::regular::PLAY
+                };
+                if sized_icon_button(ui, theme, icon, BTN, ButtonVariant::Primary).clicked() {
+                    match &live_view {
+                        Some(v) => request = Some(RecordingsRequest::TogglePlay(v.dir.clone())),
+                        None => screen.playback_id = None,
+                    }
                 }
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -739,8 +809,12 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = GAP_MD;
+                        let elapsed = match &live_view {
+                            Some(v) => library::format_duration(v.position_s as u64),
+                            None => "00:12:40".to_owned(),
+                        };
                         ui.label(
-                            RichText::new("00:12:40")
+                            RichText::new(elapsed)
                                 .font(mono.clone())
                                 .color(theme.on_surface_variant),
                         );
@@ -749,10 +823,30 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                             egui::vec2(seek_w, 14.0),
                             egui::Sense::click_and_drag(),
                         );
-                        if let Some(pos) = resp.interact_pointer_pos() {
-                            screen.playback_position =
-                                ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                        let at_pointer = |pos: egui::Pos2| {
+                            ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0)
+                        };
+                        if live_view.is_some() {
+                            // Drag shows the new place at once; the player moves on release.
+                            if resp.dragged() {
+                                screen.seeking = resp.interact_pointer_pos().map(at_pointer);
+                            }
+                            if resp.drag_stopped() {
+                                if let Some(f) = screen.seeking.take() {
+                                    request = Some(RecordingsRequest::Seek(f));
+                                }
+                            } else if resp.clicked() {
+                                if let Some(pos) = resp.interact_pointer_pos() {
+                                    request = Some(RecordingsRequest::Seek(at_pointer(pos)));
+                                }
+                            }
+                        } else if let Some(pos) = resp.interact_pointer_pos() {
+                            screen.playback_position = at_pointer(pos);
                         }
+                        let shown_fraction = match &live_view {
+                            Some(v) => screen.seeking.unwrap_or_else(|| v.fraction()),
+                            None => screen.playback_position,
+                        };
                         let track = egui::Rect::from_center_size(
                             rect.center(),
                             egui::vec2(rect.width(), 8.0),
@@ -766,15 +860,19 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                         );
                         let fill = egui::Rect::from_min_size(
                             track.min,
-                            egui::vec2(track.width() * screen.playback_position, track.height()),
+                            egui::vec2(track.width() * shown_fraction, track.height()),
                         );
                         ui.painter().rect_filled(
                             fill,
                             egui::CornerRadius::same(4),
                             theme.brand_blue,
                         );
+                        let total = match &live_view {
+                            Some(v) => library::format_duration(v.total_s as u64),
+                            None => "00:42:18".to_owned(),
+                        };
                         ui.label(
-                            RichText::new("00:42:18")
+                            RichText::new(total)
                                 .font(mono.clone())
                                 .color(theme.on_surface_variant),
                         );
@@ -785,6 +883,16 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                 ui.add_space((gap - GAP_MD).max(0.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    if live_view.is_some() {
+                        // Speed and volume are not wired: a close button instead.
+                        if icon_button(ui, theme, egui_phosphor::regular::X, 28.0)
+                            .on_hover_text(tr("Close player"))
+                            .clicked()
+                        {
+                            request = Some(RecordingsRequest::StopPlayback);
+                        }
+                        return;
+                    }
                     ui.label(
                         RichText::new(egui_phosphor::regular::SPEAKER_HIGH)
                             .size(16.0)
@@ -794,6 +902,9 @@ fn draw_playback_bar(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecordingsSc
                 });
             });
         });
+    if request.is_some() {
+        screen.request = request;
+    }
 }
 
 #[cfg(test)]
@@ -838,6 +949,20 @@ mod tests {
         idx.into_iter()
             .map(|i| s.recordings[i].display_name.clone())
             .collect()
+    }
+
+    #[test]
+    fn the_bar_fraction_comes_from_position_and_total() {
+        let view = |position_s: f32, total_s: f32| PlayerView {
+            dir: PathBuf::from("C:\\rec\\a"),
+            name: "a".into(),
+            playing: true,
+            position_s,
+            total_s,
+        };
+        assert_eq!(view(30.0, 120.0).fraction(), 0.25);
+        assert_eq!(view(5.0, 0.0).fraction(), 0.0, "no length yet");
+        assert_eq!(view(500.0, 120.0).fraction(), 1.0, "never past the end");
     }
 
     #[test]

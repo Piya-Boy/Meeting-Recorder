@@ -149,6 +149,10 @@ pub struct AppState {
     last_screen: Screen,
     /// A delete was sent and its answer has not come yet.
     asr_deleting: bool,
+    /// The recording being played, if any (the playback thread lives inside).
+    player: Option<crate::playback::PlayerHandle>,
+    /// Starts a player on a folder; tests replace it with one that uses a fake device.
+    player_start: fn(&std::path::Path) -> crate::playback::PlayerHandle,
 
     /// Whether preference changes are written to disk (off for dev-flag runs and tests).
     persist: bool,
@@ -182,6 +186,8 @@ impl Default for AppState {
             library_live: false,
             last_screen: Screen::default(),
             asr_deleting: false,
+            player: None,
+            player_start: crate::playback::PlayerHandle::start,
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
@@ -536,6 +542,85 @@ impl AppState {
             RecordingsRequest::OpenTranscript(dir) => self.open_transcript(&dir),
             RecordingsRequest::Transcribe(dir) => self.start_transcription(dir),
             RecordingsRequest::OpenFolder(dir) => open_in_explorer(&dir),
+            RecordingsRequest::TogglePlay(dir) => self.toggle_play(dir),
+            RecordingsRequest::Seek(fraction) => {
+                if let Some(p) = &self.player {
+                    let total = p.snapshot().total_frames as f64;
+                    let frame = (f64::from(fraction.clamp(0.0, 1.0)) * total) as u64;
+                    p.send(crate::playback::Cmd::Seek(frame));
+                }
+            }
+            RecordingsRequest::StopPlayback => self.stop_player(),
+        }
+    }
+
+    /// Row or bar play button: pauses or resumes the recording that is loaded, otherwise loads
+    /// this one (replacing the old player and closing its files first).
+    pub fn toggle_play(&mut self, dir: std::path::PathBuf) {
+        use crate::playback::{Cmd, State};
+        if self.recorder.state.session_active() {
+            self.asr_notice = Some("Stop recording before playing.".to_owned());
+            return;
+        }
+        if let Some(p) = &self.player {
+            if p.dir() == dir.as_path() {
+                match p.snapshot().state {
+                    State::Playing => return p.send(Cmd::Pause),
+                    State::Paused | State::Finished => return p.send(Cmd::Resume),
+                    State::Failed => {} // start over below
+                }
+            }
+        }
+        self.stop_player();
+        self.player = Some((self.player_start)(&dir));
+    }
+
+    /// Stops playback and waits until the player has closed the files.
+    pub fn stop_player(&mut self) {
+        if let Some(p) = self.player.take() {
+            p.stop();
+        }
+        self.recordings.player = None;
+    }
+
+    /// Per frame: copy the player's state to the Recordings screen, report a failed player, and
+    /// stop playback when a recording starts (it would be recorded by a loopback source).
+    pub fn sync_player(&mut self, ctx: &egui::Context) {
+        use crate::playback::State;
+        let Some(p) = &self.player else {
+            self.recordings.player = None;
+            return;
+        };
+        if self.recorder.state.session_active() {
+            self.stop_player();
+            self.asr_notice = Some("Playback stopped because a recording started.".to_owned());
+            return;
+        }
+        let snap = p.snapshot();
+        if snap.state == State::Failed {
+            self.stop_player();
+            self.asr_notice = Some("Could not play the recording.".to_owned());
+            return;
+        }
+        let dir = p.dir().to_path_buf();
+        let name = self
+            .recordings
+            .recordings
+            .iter()
+            .find(|r| r.dir.as_deref() == Some(dir.as_path()))
+            .map(|r| r.display_name.clone())
+            .or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let rate = snap.rate.max(1) as f32;
+        self.recordings.player = Some(crate::screens::recordings::PlayerView {
+            dir,
+            name,
+            playing: snap.state == State::Playing,
+            position_s: snap.position_frames as f32 / rate,
+            total_s: snap.total_frames as f32 / rate,
+        });
+        if snap.state == State::Playing {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
 
@@ -622,6 +707,10 @@ impl AppState {
         ) && self.recorder.transcript_dir.as_deref() == Some(dir);
         if busy {
             return Err("This recording is being transcribed.".to_owned());
+        }
+        // The player holds the WAV files open, which would make the delete fail.
+        if self.player.as_ref().is_some_and(|p| p.dir() == dir) {
+            self.stop_player();
         }
         let base = std::path::PathBuf::from(&self.recorder.destination);
         crate::library::delete_session(&base, dir)
@@ -758,6 +847,7 @@ impl eframe::App for AppState {
         }
         self.sync_asr();
         self.sync_library(ctx);
+        self.sync_player(ctx);
         if let Some(notice) = self.take_asr_notice() {
             crate::toast::show(ctx, crate::i18n::tr(&notice));
         }
@@ -1737,5 +1827,190 @@ mod tests {
     fn explorer_select_argument_quotes_the_path_and_uses_backslashes() {
         let arg = explorer_select_arg(std::path::Path::new("C:/My Rec/2026 x/transcript.srt"));
         assert_eq!(arg, "/select,\"C:\\My Rec\\2026 x\\transcript.srt\"");
+    }
+
+    // ─── Playback (fake output device, real files) ───────────────────────────────────────────
+
+    /// A session folder with a 10-second mic track, long enough to still be playing mid-test.
+    fn play_dir(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ramp: Vec<i16> = (0..160_000)
+            .map(|i| ((i % 2_000) as i16 - 1_000) * 10)
+            .collect();
+        let file = std::fs::File::create(dir.join("mic.wav")).unwrap();
+        let mut w = crate::audio::wav::WavWriter::new(file, 16_000).unwrap();
+        w.write_samples(&ramp).unwrap();
+        w.finish().unwrap();
+        dir
+    }
+
+    fn fake_app(base: &std::path::Path) -> AppState {
+        let mut a = AppState {
+            player_start: crate::playback::testing::start_fake,
+            ..AppState::default()
+        };
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a
+    }
+
+    fn failing_start(dir: &std::path::Path) -> crate::playback::PlayerHandle {
+        crate::playback::PlayerHandle::start_with(dir, |_| Err("no output device".to_owned()))
+    }
+
+    fn wait_player(
+        a: &AppState,
+        what: &str,
+        cond: impl Fn(&crate::playback::Snapshot) -> bool,
+    ) -> crate::playback::Snapshot {
+        let t = std::time::Instant::now();
+        loop {
+            let snap = a.player.as_ref().expect("a player").snapshot();
+            if cond(&snap) {
+                return snap;
+            }
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "timed out waiting for {what}: {snap:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn toggle_play_starts_pauses_and_resumes_the_same_folder() {
+        use crate::playback::State;
+        let base = library_dir("app-play");
+        let dir = play_dir(&base, "2026-11-25_1000_talk");
+        let mut a = fake_app(&base);
+        let ctx = egui::Context::default();
+
+        a.toggle_play(dir.clone());
+        wait_player(&a, "playing", |s| {
+            s.state == State::Playing && s.position_frames > 0
+        });
+        a.sync_player(&ctx);
+        let v = a.recordings.player.clone().expect("the bar has a player");
+        assert_eq!(v.dir, dir);
+        assert_eq!(v.name, "2026-11-25_1000_talk", "no row: the folder name");
+        assert!(v.playing && v.position_s > 0.0);
+        assert!((v.total_s - 10.0).abs() < 0.01, "{}", v.total_s);
+
+        a.toggle_play(dir.clone());
+        let paused = wait_player(&a, "paused", |s| s.state == State::Paused);
+        a.sync_player(&ctx);
+        assert!(!a.recordings.player.as_ref().unwrap().playing);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let still = a.player.as_ref().unwrap().snapshot().position_frames;
+        assert_eq!(still, paused.position_frames, "paused holds still");
+
+        a.toggle_play(dir.clone());
+        wait_player(&a, "playing again", |s| {
+            s.state == State::Playing && s.position_frames > paused.position_frames
+        });
+        a.stop_player();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn toggling_another_folder_replaces_the_player_and_closes_the_old_files() {
+        use crate::playback::State;
+        let base = library_dir("app-play-two");
+        let first = play_dir(&base, "2026-11-25_1000_a");
+        let second = play_dir(&base, "2026-11-25_1100_b");
+        let mut a = fake_app(&base);
+        a.toggle_play(first.clone());
+        wait_player(&a, "first playing", |s| s.state == State::Playing);
+        a.toggle_play(second.clone());
+        assert_eq!(a.player.as_ref().unwrap().dir(), second.as_path());
+        std::fs::remove_dir_all(&first).expect("the old player closed its files");
+        a.stop_player();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn play_is_refused_while_recording_and_playback_stops_when_a_recording_starts() {
+        use crate::playback::State;
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-play-rec");
+        let dir = play_dir(&base, "2026-11-25_1000_a");
+        let mut a = fake_app(&base);
+        let ctx = egui::Context::default();
+
+        a.recorder.state = RecorderState::Recording;
+        a.toggle_play(dir.clone());
+        assert!(a.player.is_none());
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Stop recording before playing.")
+        );
+
+        a.recorder.state = RecorderState::Idle;
+        a.toggle_play(dir.clone());
+        wait_player(&a, "playing", |s| s.state == State::Playing);
+        a.recorder.state = RecorderState::Recording;
+        a.sync_player(&ctx);
+        assert!(a.player.is_none() && a.recordings.player.is_none());
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Playback stopped because a recording started.")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_failed_player_clears_the_bar_and_reports_it() {
+        use crate::playback::State;
+        let base = library_dir("app-play-fail");
+        let dir = play_dir(&base, "2026-11-25_1000_a");
+        let mut a = fake_app(&base);
+        a.player_start = failing_start;
+        let ctx = egui::Context::default();
+        a.toggle_play(dir);
+        wait_player(&a, "failure", |s| s.state == State::Failed);
+        a.sync_player(&ctx);
+        assert!(a.player.is_none() && a.recordings.player.is_none());
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Could not play the recording.")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_stops_the_player_first_and_removes_the_folder() {
+        use crate::playback::State;
+        let base = library_dir("app-play-del");
+        let dir = play_dir(&base, "2026-11-25_1000_a");
+        let mut a = fake_app(&base);
+        a.toggle_play(dir.clone());
+        wait_player(&a, "playing", |s| s.state == State::Playing);
+        a.delete_recording(&dir)
+            .expect("deleting the playing recording works");
+        assert!(!dir.exists());
+        assert!(a.player.is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn seek_and_stop_requests_reach_the_player() {
+        use crate::playback::State;
+        let base = library_dir("app-play-seek");
+        let dir = play_dir(&base, "2026-11-25_1000_a");
+        let mut a = fake_app(&base);
+        let ctx = egui::Context::default();
+        a.toggle_play(dir.clone());
+        wait_player(&a, "playing", |s| s.state == State::Playing);
+        a.toggle_play(dir.clone());
+        wait_player(&a, "paused", |s| s.state == State::Paused);
+        a.handle_recordings_request(RecordingsRequest::Seek(0.5));
+        wait_player(&a, "seek", |s| s.position_frames == 80_000);
+        a.sync_player(&ctx);
+        assert!((a.recordings.player.as_ref().unwrap().position_s - 5.0).abs() < 0.01);
+
+        a.handle_recordings_request(RecordingsRequest::StopPlayback);
+        a.sync_player(&ctx);
+        assert!(a.player.is_none() && a.recordings.player.is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
