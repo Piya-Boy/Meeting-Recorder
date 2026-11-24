@@ -553,6 +553,26 @@ mod tests {
     }
 
     #[test]
+    fn scanning_200_sessions_is_quick() {
+        let t = Tmp::new();
+        for i in 0..200 {
+            let d = t.dir(&format!("2026-11-24_{:04}_session-{i}", i));
+            wav(&d.join("mic.wav"), 1);
+            wav(&d.join("system.wav"), 1);
+            if i % 2 == 0 {
+                write_transcript(&d, vec![line(Track::Mic, 0, "สวัสดีครับ")]);
+            }
+        }
+        let start = std::time::Instant::now();
+        let list = scan(&t.0);
+        let took = start.elapsed();
+        eprintln!("scan of 200 sessions took {took:?}");
+        assert_eq!(list.len(), 200);
+        assert_eq!(list.iter().filter(|e| e.transcript.is_some()).count(), 100);
+        assert!(took.as_secs() < 5, "took {took:?}");
+    }
+
+    #[test]
     fn format_duration_and_size() {
         assert_eq!(format_duration(0), "00:00:00");
         assert_eq!(format_duration(3661), "01:01:01");

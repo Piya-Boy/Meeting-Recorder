@@ -19,9 +19,13 @@ _None._
 - [ ] Task: Live transcript during recording (the transcript is made after Stop only)
   - Acceptance Criteria: partial and final lines appear while recording; Settings "Partial transcription" and "Streaming chunk window" take effect (today they are shown but do nothing).
   - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
-- [ ] Task: Wire Recordings and Transcripts to real data (SQLite index, saved files)
-  - Acceptance Criteria: recordings and transcripts read from disk / SQLite instead of mock data.
-  - Verification: Record a short session, reopen the app, find it in Recordings and Transcripts; `cargo test` covers the storage layer.
+- [ ] Task: Library follow-ups (open items of the real-data work)
+  - Playback: the Recordings player is hidden for real rows; there is no audio output path yet (the row has an "Open folder" button instead).
+  - Editing transcript text on the detail page (read-only for now) and Export TXT / SRT / JSON (buttons still say "not wired").
+  - A folder added or removed outside the app (Explorer) appears only when the screen is opened again: no folder watch and no refresh button.
+  - Settings > Storage folders and the "index.db" line are still sample data; the library reads the Recorder's destination.
+  - SQLite index: only if listing gets slow (200 sessions scan in 37 ms in a debug build).
+  - Verification: do each item and record the result here.
 - [ ] Task: Keyboard navigation inside tables and dropdown popups
   - Acceptance Criteria: Arrow keys / Enter work in rows and popups; focus ring visible.
   - Verification: Real key presses with screenshots.
@@ -99,6 +103,22 @@ _None._
   - Not verified: speaker labels on a real call (mic = "You", system = "Others" came from the clip runs, where the clips played through the speakers and the whole-system loopback also caught other PC audio).
   - Open gate for any release: licence compatibility of the model (OpenMDW-1.1) with this project's licence, and the "Powered by OpenThai ASR" badge (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
   - Commit: branch `feature/asr-transcription`, not pushed, no PR.
+
+- [x] Task: Recordings, Transcripts and Transcript Detail from real data (branch `feature/library-real-data`; spec `docs/superpowers/specs/2026-11-24-library-real-data-design.md`, plan `docs/superpowers/plans/2026-11-24-library-real-data.md`)
+  - Built: `src/library.rs` scans the session folders under the Recorder's destination (WAV durations and sizes, `transcript.json`) on a background thread; Recordings lists them with working search, date filter and sort, Transcribe for audio-only rows, Delete (only the files the app wrote; refused while recording or transcribing) and Open folder; Transcripts lists the transcribed ones (line count, first line, search through every line); the detail page shows the real lines with You / Others chips; Copy and Copy all give the text of `transcript.txt`. Dev-flag runs without `--audio` keep the sample data.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 277 passed, 6 ignored. Removing a guard made its test fail for: the delete parent check, the sort, the recording-in-progress refusal, the line search.
+  - Acceptance checks run on this machine, real exe, mouse clicks:
+    - PASS the list matches the disk: durations 43 / 17 / 12 / 20 s and sizes 7.9 / 3.2 / 2.2 / 3.7 MB equal Python `wave` and file sizes for the same folders; dates come from the folder names.
+    - PASS a folder created outside the app (copied WAV) was absent while the screen stayed open and listed after leaving and re-opening Recordings.
+    - PASS Transcribe on an audio-only row: "Processing 0%", then Transcribed by itself, `transcript.json` and `transcript.txt` written.
+    - PASS Delete through the modal removed a session; a folder with an extra user file lost only the WAV and kept the file.
+    - PASS Open transcript (from both lists) shows the real lines; Copy all put exactly the text of `transcript.txt` on the clipboard.
+    - PASS scan of 200 sessions (100 with transcripts): 37 ms in a debug build (test `scanning_200_sessions_is_quick`); the window was not driven with 200 folders.
+    - PARTIAL search inside line text: unit tests only (Thai keyboard input into the real search box was not driven).
+    - PARTIAL delete refusal while recording or transcribing: unit tests only, not tried in the real window.
+    - PARTIAL "a saved recording adds a row without reopening": unit test only (the list refreshes on `Saved`).
+  - Not verified: Thai screenshots of the new rows; keyboard focus on the new row buttons; a transcript of a long meeting on the detail page.
+  - Commit: branch `feature/library-real-data` (stacked on `feature/asr-transcription`), not pushed, no PR.
 
 ## Rules
 

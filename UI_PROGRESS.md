@@ -93,3 +93,11 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Dev flag `--engine=missing|downloading` joins `loading|ready|error`.
 - Checked with screenshots of the real exe (English): empty, Waiting, downloading (838 MB / 946 MB), ready, Transcribing, done with lines, recording a second session while the first transcribes. Not screenshotted: the Thai running state.
 - Known: the "Recording saved to" toast covers the footer Cancel button for a few seconds.
+
+## Recordings, Transcripts and Detail with real data (2026-11-24)
+
+- Run with `--audio` (or normally) the three screens list the real session folders; any other dev flag keeps the sample data.
+- Recordings: real rows (name, folder, date, duration, size, status pill), search / date filter / sort work, Open folder icon instead of Play, no bottom player, Transcribe starts a job and the pill shows "Processing n%", Delete opens the existing modal. "Loading recordings..." until the first scan arrives.
+- Transcripts: title, date, duration, "Lines" column, first line as preview; search placeholder without "(SQLite FTS)"; Copy gives the real text.
+- Detail: date, duration, "N lines"; rows with time stamp, You / Others chip, selectable text; no edit hint (read-only).
+- Checked with screenshots of the real exe in English: list, delete modal, processing, transcribed, Transcripts list, detail (aligned chip column). Not screenshotted: Thai, light theme, long transcript.
