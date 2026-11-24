@@ -20,6 +20,11 @@ _None._
   - Not tried: a real person speaking into the microphone (the 2-minute run played recorded speech through the speakers, so only the system track had speech; the microphone read -90 dB); the model-not-installed path in the real window (unit tests only; the 1 GB model was not deleted to try it); Thai and light-theme screenshots of the "Listening..." state.
   - Known limits: a final line appears only after its segment ends (a pause of 0.5 s after 8 s of speech, 1.2 s after 2 s, or 25 s at most), so with continuous speech the first final line came more than 15 s after the speech began (the grey preview text, see the next entry, fills that gap); a live line can differ from the final line of the same moment (the final transcript cuts and reads the whole file); a recording that starts while a transcription job is on the panel gets no live lines (its final transcript still comes).
   - Verification: do each item and record the result here.
+- [ ] Task: Accuracy follow-ups (open items of the language and word-fix work)
+  - An ear-checked reference for the 190 s recording `2026-11-25_0157` (the draft is `%USERPROFILE%\Documents\MeetingRecorder\eval\2026-11-25_0157\reference.txt`, the doubtful spots are listed in `check-by-ear.txt` beside it). Every CER below was measured against a reference written from the model's own output and corrected from context only, so it favours the Thai + English greedy output; re-measure once a person has listened.
+  - The Recorder header still shows the fixed "Thai (TH)" pill whatever the Language setting is.
+  - Word fixes match exactly (Latin letters in any case): every wrong form has to be listed (the run below wrote "มก", which the seeded rules did not list, so "มอก." did not appear). Fixes do not change transcripts made before a rule was added.
+  - Verification: do each item and record the result here.
 - [ ] Task: Library follow-ups (open items of the real-data work)
   - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
   - Editing transcript text on the detail page (read-only for now).
@@ -171,6 +176,18 @@ _None._
     - Not run: a person speaking into the microphone; the preview with both tracks speaking at once (two grey rows); Thai and light-theme screenshots.
   - Known limits: the grey text changes while it is shown (words can be rewritten as more audio arrives); each re-read decodes the whole unfinished segment, so CPU grows with segment length (a segment is cut at 25 s at the latest); the grey rows do not follow the search box.
   - Commit: branch `feature/live-partial-text`, not pushed, no PR.
+
+- [x] Task: Thai + English language option and word fixes (branch `feature/language-and-glossary`, on top of `feature/live-partial-text`; spec `docs/superpowers/specs/2026-11-25-language-and-word-fixes-design.md`)
+  - Measured first (Python, int8, the 190 s recording `2026-11-25_0157`, 9 segments, reference see the follow-ups task): greedy Thai prompt 9.7% CER, greedy Thai + English prompt 6.0%; beam search (beam 4) 10.7% and 7.8% (it rewrote words both ways: "สรุป" for "สบู่", but "มิถุนายน" for "มิลลิแอมป์"); hotword boosting with beam (β = 1 nat per matched character) 5.55% against 5.97% without it on a CER that counts "mAh" and "มิลลิแอมป์" as the same, and 13% to 19% at β = 2 to 3 (whole ends of segments dropped, a decoy word appeared). Beam search and hotwords were not ported (`DECISIONS.md`).
+  - Built: `Language` (Thai prompt 32, Thai + English prompt 63) and `Recognizer::set_language`; `asr::glossary` (one rule a line, `wrong, wrong = right`, longest match first, Latin letters in any case, an empty right side deletes, a result is not replaced again); `TextOptions { language, glossary }` sent with `Command::Transcribe` and `Command::LiveStart` and applied to final lines, live lines and previews (a line the fixes empty is dropped); Settings > Transcription gets a Language select and a "Word fixes" box with a count of fixes and of lines that are not rules; both saved in `settings.ini` (`asr.language`, one `asr.glossary` line per rule).
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 365 passed, 7 ignored (15 new), stable over 3 runs. Tests were written first and seen to fail (compile errors). Applying no fixes in `TextOptions::fix` made three tests fail.
+  - Acceptance checks run on this machine, real exe started without flags (so it read `settings.ini`), real model; the user's `settings.ini` was backed up, seeded with `asr.language=th-en` and four rules, and restored afterwards; 80 s of the user's recording `0157` played through the speakers:
+    - PASS Settings > Transcription showed "Thai + English" from the file.
+    - PASS live text and the final transcript wrote English words in Latin letters ("power bank", "100 percent"); the live lines showed "MagSafe" (the final run wrote "แม็กซ์เซฟ", which no rule listed).
+    - PASS both WAVs held 4,158,680 frames; the final transcript was written (4 lines). The test recordings were deleted.
+    - Not run: typing rules into the box in the real window (seeded through the file instead), Thai and light-theme screenshots.
+    - Found on the way: with `--audio` (a dev flag) the app does not read `settings.ini`; and two clicks of the test driver were lost while sound played until the driver brought the window to the front before each click (automation only).
+  - Commit: branch `feature/language-and-glossary`, not pushed, no PR.
 
 ## Rules
 

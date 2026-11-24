@@ -25,7 +25,7 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 ## Planned capabilities
 
 - Capture system audio (WASAPI loopback) and the microphone as separate tracks.
-- Transcribe Thai speech on the device with OpenThai ASR running on ONNX Runtime, with transcript text shown while recording.
+- Transcribe Thai speech on the device with OpenThai ASR running on ONNX Runtime, with transcript text shown while recording; English words can be written in Latin letters, and your own word fixes are applied.
 - Keep a local library of recordings and transcripts, indexed in SQLite.
 - Export transcripts as TXT, SRT and JSON.
 

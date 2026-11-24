@@ -124,3 +124,8 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Recorder transcript panel: the sentence being spoken shows as grey italic text (with its time and the "You" / "Others" badge) below the final lines, one row per track, and is replaced by the final white line when its segment ends. "Listening..." shows only until the first text.
 - Settings > Transcription: "Partial transcription" now reads "Show transcript text while recording. Grey text may still change; a line is final after a pause." (English and Thai).
 - Checked with screenshots of the real exe in English: the first grey text at 00:00:06, more words at 00:00:09, a final line plus a new grey row at 00:00:18, four final lines at 00:00:58. Not screenshotted: two tracks speaking at once, Thai, light theme.
+
+## Language and word fixes (2026-11-25)
+
+- Settings > Transcription: "Language" is now a select ("Thai", "Thai + English") with the description "Thai writes every word in Thai letters; Thai + English writes English words in Latin letters." Below the live settings, "Word fixes": a description, a multi-line box (hint "มอล, หมอก = มอก.") and a line "N fixes", plus "· M lines not understood (use wrong = right)" in the warning colour when a line is not a rule. English and Thai strings; the old "Primary recognition language." string is gone.
+- Checked with screenshots of the real exe in English: the select showing "Thai + English" read from `settings.ini`, and Latin words in the live and final Recorder text. Not screenshotted: the word-fix box with typed rules, Thai, light theme.

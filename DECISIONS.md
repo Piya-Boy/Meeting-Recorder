@@ -261,3 +261,12 @@ _Add decisions below._
 - Alternatives: Cutting segments every 3 s (words are cut in two and read worse); the model's streaming mode (needs a different ONNX export and its state); keeping the 5 s flush (adds up to 5 s to every preview).
 - Consequences: The first grey words appeared about 4 to 5 s after the speech began. CPU about doubled while recording (about 0.6 of one core, from 0.3), and grows with the length of the unfinished segment. A crash now loses at most about 1 s of audio from the headers instead of 5 s. The header is rewritten once a second.
 - References: `src/asr/live.rs`, `src/audio/worker.rs`, `docs/superpowers/specs/2026-11-25-live-partial-text-design.md`
+
+### 2026-11-25 - Accuracy: a Thai + English option and word fixes; no beam search or hotwords
+
+- Status: Accepted
+- Context: English words in a real recording came out in Thai letters, and terms the model does not know ("มอก.", "มิลลิแอมป์", "พาวเวอร์แบงก์") came out wrong. The engine used the Thai prompt and greedy decoding; the model also has a Thai-mixed-with-English prompt. Measured in Python on the 190 s recording `2026-11-25_0157` (reference written from the model's output and corrected from context only, so it favours the Thai + English greedy output): Thai prompt 9.7% CER, Thai + English prompt 6.0%; beam search 10.7% and 7.8%; hotword boosting with beam 5.55% against 5.97% at the mildest setting and 13% to 19% at stronger ones (ends of segments dropped, a decoy word appeared).
+- Decision: Add a Language setting (Thai, Thai + English; Thai stays the default) and a word-fix list that rewrites the finished text: one rule a line, several wrong forms separated by commas, longest match first, Latin letters in any case, applied to final lines, live lines and previews. Do not port beam search or hotwords.
+- Alternatives: Beam search (more decoding work, no measured gain, rewrote words both ways); hotword boosting (a small gain at best, damage when stronger, and the model still cannot write a word it does not hear); choosing the prompt per segment by the model's confidence (two encoder runs, not tried).
+- Consequences: A user can fix recurring mistakes deterministically, but must list each wrong form; fixes apply to transcripts made after the rule is added. The numbers need re-measuring once a person has checked the reference by ear (`TASKS.md`).
+- References: `src/asr/glossary.rs`, `src/asr/engine.rs`, `docs/superpowers/specs/2026-11-25-language-and-word-fixes-design.md`
