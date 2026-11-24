@@ -1,6 +1,7 @@
 //! Audio capture: WAV writing, sample clock, session worker and the WASAPI backend.
 //! See docs/superpowers/specs/2026-11-24-audio-capture-design.md.
 
+pub mod clock;
 pub mod wav;
 
 /// Unique, freshly created directory under the system temp dir, for tests.
