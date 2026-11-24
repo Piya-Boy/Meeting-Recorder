@@ -22,6 +22,8 @@ pub(crate) fn temp_dir(tag: &str) -> std::path::PathBuf {
         tag,
         N.fetch_add(1, Ordering::Relaxed)
     ));
+    // A process id can come back: start from nothing, not from what an old run left.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir
 }
