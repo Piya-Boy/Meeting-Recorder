@@ -160,7 +160,6 @@ pub fn scan(base: &Path) -> Vec<Entry> {
 }
 
 /// The lines of the transcript in `dir`, for the detail page.
-#[allow(dead_code)] // used by the detail page (next task)
 pub fn load_transcript(dir: &Path) -> io::Result<Vec<Line>> {
     let text = fs::read_to_string(dir.join(TRANSCRIPT_JSON))?;
     parse_transcript(&text).ok_or_else(|| {

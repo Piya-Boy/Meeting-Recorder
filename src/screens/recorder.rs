@@ -1443,7 +1443,7 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
 
 /// Small tinted status pill (translucent fill + hairline border in `tint`).
 /// Badge with a `tint` fill/border and a separately chosen, legible `text_color`.
-fn tinted_badge(ui: &mut Ui, tint: Color32, text_color: Color32, text: &str) {
+pub(crate) fn tinted_badge(ui: &mut Ui, tint: Color32, text_color: Color32, text: &str) {
     egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(
             tint.r(),

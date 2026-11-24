@@ -20,7 +20,7 @@ use crate::screens::{
         },
     },
     transcript_detail::{draw_transcript_detail_screen, TranscriptDetailScreen},
-    transcripts::{draw_transcripts_screen, TranscriptsScreen},
+    transcripts::{draw_transcripts_screen, TranscriptsRequest, TranscriptsScreen},
 };
 use crate::settings_store::{self, Persisted};
 use crate::shell;
@@ -470,6 +470,7 @@ impl AppState {
     pub fn enable_library(&mut self) {
         self.library_live = true;
         self.recordings.go_live();
+        self.transcripts.go_live();
         self.refresh_library();
     }
 
@@ -497,6 +498,7 @@ impl AppState {
             }
         }
         if let Some(list) = self.library.poll() {
+            self.transcripts.set_entries(&list);
             self.recordings.set_entries(list);
         }
         let processing = match (&self.recorder.asr_job, &self.recorder.transcript_dir) {
@@ -521,6 +523,9 @@ impl AppState {
         if let Some(request) = self.recordings.request.take() {
             self.handle_recordings_request(request);
         }
+        if let Some(request) = self.transcripts.request.take() {
+            self.handle_transcripts_request(ctx, request);
+        }
         if self.library.is_pending() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -528,12 +533,53 @@ impl AppState {
 
     fn handle_recordings_request(&mut self, request: RecordingsRequest) {
         match request {
-            RecordingsRequest::OpenTranscript(_dir) => {
-                self.current_screen = Screen::TranscriptDetail;
-            }
+            RecordingsRequest::OpenTranscript(dir) => self.open_transcript(&dir),
             RecordingsRequest::Transcribe(dir) => self.start_transcription(dir),
             RecordingsRequest::OpenFolder(dir) => open_in_explorer(&dir),
         }
+    }
+
+    fn handle_transcripts_request(&mut self, ctx: &egui::Context, request: TranscriptsRequest) {
+        match request {
+            TranscriptsRequest::Open(dir) => self.open_transcript(&dir),
+            TranscriptsRequest::Copy(dir) => match crate::library::load_transcript(&dir) {
+                Ok(lines) => {
+                    ctx.copy_text(crate::screens::transcript_detail::lines_text(&lines));
+                    self.asr_notice = Some("Transcript copied to clipboard".to_owned());
+                }
+                Err(_) => self.asr_notice = Some("Could not open the transcript.".to_owned()),
+            },
+        }
+    }
+
+    /// Loads the transcript of a recording into the detail page and opens it. A damaged or
+    /// missing file shows a notice and leaves the current screen as it is.
+    pub fn open_transcript(&mut self, dir: &std::path::Path) {
+        let lines = match crate::library::load_transcript(dir) {
+            Ok(lines) => lines,
+            Err(_) => {
+                self.asr_notice = Some("Could not open the transcript.".to_owned());
+                return;
+            }
+        };
+        let row = self
+            .recordings
+            .recordings
+            .iter()
+            .find(|r| r.dir.as_deref() == Some(dir));
+        let (title, date, duration) = match row {
+            Some(r) => (r.display_name.clone(), r.date.clone(), r.duration.clone()),
+            None => (
+                dir.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                String::new(),
+                String::new(),
+            ),
+        };
+        self.transcript_detail
+            .show_real(title, date, duration, &lines);
+        self.current_screen = Screen::TranscriptDetail;
     }
 
     /// Deletes a recording folder. Refused while a recording is in progress or while the folder
@@ -1503,6 +1549,103 @@ mod tests {
         pump_library(&mut a, "the new row", |a| {
             a.recordings.recordings.len() == 1
         });
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn write_real_transcript(dir: &std::path::Path) {
+        use crate::asr::transcript::{Line, ModelInfo, Track, Transcript};
+        let t = Transcript {
+            model: ModelInfo {
+                name: "m".into(),
+                revision: "r".into(),
+                precision: "int8".into(),
+            },
+            created: "2026-11-24T10:00:00".into(),
+            lines: vec![
+                Line {
+                    track: Track::Mic,
+                    start_ms: 0,
+                    end_ms: 900,
+                    text: "สวัสดีครับ".into(),
+                },
+                Line {
+                    track: Track::System,
+                    start_ms: 1500,
+                    end_ms: 2400,
+                    text: "เราจะทำงานนี้".into(),
+                },
+            ],
+        };
+        crate::asr::transcript::write(dir, &t, "You", "Others").unwrap();
+    }
+
+    #[test]
+    fn a_scan_fills_both_lists_and_opening_a_transcript_shows_its_lines() {
+        let base = library_dir("app-open");
+        let done = session_dir(&base, "2026-11-24_1000_done");
+        session_dir(&base, "2026-11-24_0900_audio-only");
+        write_real_transcript(&done);
+        let mut a = AppState::default();
+        a.recorder.destination = base.to_string_lossy().into_owned();
+        a.enable_library();
+        pump_library(&mut a, "both lists", |a| {
+            a.recordings.loaded && a.transcripts.loaded
+        });
+        assert_eq!(a.recordings.recordings.len(), 2);
+        assert_eq!(
+            a.transcripts.transcripts.len(),
+            1,
+            "only the transcribed one"
+        );
+        a.open_transcript(&done);
+        assert_eq!(a.current_screen, Screen::TranscriptDetail);
+        assert!(a.transcript_detail.live);
+        assert_eq!(a.transcript_detail.title, "done");
+        assert_eq!(a.transcript_detail.articles.len(), 2);
+        assert_eq!(a.transcript_detail.articles[1].timestamp, "00:00:01");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_damaged_transcript_reports_and_stays_on_the_list() {
+        let base = library_dir("app-damaged");
+        let dir = session_dir(&base, "2026-11-24_1000_bad");
+        std::fs::write(dir.join("transcript.json"), "{ not json").unwrap();
+        let mut a = AppState {
+            current_screen: Screen::Recordings,
+            ..AppState::default()
+        };
+        a.open_transcript(&dir);
+        assert_eq!(a.current_screen, Screen::Recordings);
+        assert!(!a.transcript_detail.live, "the page keeps what it showed");
+        assert!(a.take_asr_notice().is_some());
+        a.open_transcript(&base.join("missing"));
+        assert_eq!(a.current_screen, Screen::Recordings);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_transcripts_copy_button_reports_success_and_a_missing_file() {
+        let base = library_dir("app-copy");
+        let dir = session_dir(&base, "2026-11-24_1000_done");
+        write_real_transcript(&dir);
+        let mut a = AppState::default();
+        let ctx = egui::Context::default();
+        a.handle_transcripts_request(&ctx, TranscriptsRequest::Copy(dir.clone()));
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Transcript copied to clipboard")
+        );
+        a.handle_transcripts_request(&ctx, TranscriptsRequest::Copy(base.join("missing")));
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Could not open the transcript.")
+        );
+        let text = crate::screens::transcript_detail::lines_text(
+            &crate::library::load_transcript(&dir).unwrap(),
+        );
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("] ") && text.contains("เราจะทำงานนี้"));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
