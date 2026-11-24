@@ -113,6 +113,16 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
         )
         .wrap(),
     );
+    ui.add(
+        egui::Label::new(
+            RichText::new(tr(
+                "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
+            ))
+            .size(12.0)
+            .color(theme.on_surface_variant),
+        )
+        .wrap(),
+    );
     ui.add_space(4.0);
     footer(ui, |ui| {
         if custom_button(ui, theme, None, "Close", ButtonVariant::Secondary).clicked() {

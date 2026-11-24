@@ -348,6 +348,7 @@ const THAI: &[(&str, &str)] = &[
     ("You", "คุณ"),
     ("Others", "คนอื่น"),
     ("lines", "บรรทัด"),
+    ("Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.", "สัญญาอนุญาตของไลบรารีและโมเดลเสียง: ไฟล์ THIRD_PARTY_NOTICES.md ในโฟลเดอร์โปรเจกต์"),
 ];
 
 #[cfg(test)]
@@ -403,6 +404,7 @@ mod tests {
             "You",
             "Others",
             "lines",
+            "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
         ] {
             assert!(has_thai(key), "missing Thai for {key:?}");
         }

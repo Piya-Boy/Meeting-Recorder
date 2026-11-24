@@ -572,7 +572,8 @@ Status as of 2026-11-24 (details: `UI_PROGRESS.md`, `TASKS.md`, `DECISIONS.md`).
 - Transcription engine states (loading / ready / unavailable) on the Recorder and in Settings > Transcription.
 - Layouts checked at 1200x760, 1280x800 and maximised, in English and Thai.
 - Audio capture (details: `docs/superpowers/specs/2026-11-24-audio-capture-design.md`): the Recorder starts, pauses, resumes and stops a real session and writes `system.wav` and `mic.wav` (mono 16-bit PCM) into `<destination>\<YYYY-MM-DD_HHMM>_<name>\`. Device lists come from Windows; the chosen devices are saved by ID and shared by Settings > Audio and the Recorder. New states: Starting (button pressed, session not up yet) and Saved (files closed; the folder path is shown and a toast names it); Stopping and Finalizing show as Processing. Each source shows a status: Ready, Connected, "All system audio" (no Zoom/Teams found, whole-system fallback), "Waiting for the meeting app", "Device lost", "Could not start", Off. Error text on the banner is the worker's message. Dev runs without `--audio` keep the old mock behavior.
-- `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test` (105 tests, 4 more need hardware) pass.
+- Transcription (details: `docs/superpowers/specs/2026-11-24-asr-transcription-design.md`): after Stop the Recorder transcribes `mic.wav` and `system.wav` with OpenThai ASR (ONNX Runtime, on this computer) and writes `transcript.json` and `transcript.txt` next to them. The Transcript panel has these states: empty ("no transcript yet" with a Transcribe button on a saved recording), Waiting (model not installed: a banner and an "Open Transcription settings" button), Transcribing (progress "mm:ss / mm:ss" and Cancel), done (lines with a time stamp and a You / Others chip, footer "N lines"), failed (error banner). Settings > Transcription shows the real model state and has Download / Cancel / Delete, precision (int8, fp32) and CPU threads (4, 6, 8), all saved. Licences: the About modal points to `THIRD_PARTY_NOTICES.md`.
+- `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test` (246 tests, 6 more need hardware, the model or clips) pass.
 
 ### Intentional deviations from this document
 - **Icons:** Phosphor (`egui-phosphor`) instead of Lucide (section 10).
@@ -583,8 +584,9 @@ Status as of 2026-11-24 (details: `UI_PROGRESS.md`, `TASKS.md`, `DECISIONS.md`).
 - **Timer:** 28px compact timer below ~290px panel width (the spec's `display_timer_compact`).
 
 ### Not done (needs a backend, outside the UI migration scope)
-- ASR (OpenThai / ONNX Runtime), SQLite storage, real exports; recordings, transcripts and engine status are mock data.
+- SQLite storage and real exports; the Recordings and Transcripts lists are mock data. The Recorder's transcript is real, but only after Stop: there is no live transcript while recording, and Settings > Transcription "Partial transcription" and "Streaming chunk window" are shown and saved but do nothing yet.
+- Transcription is not accepted on a clean 2-minute capture of real speech, and the licence compatibility of the model and the "Powered by OpenThai ASR" badge are unchecked (`TASKS.md`, `DECISIONS.md`).
 - Audio capture is not accepted yet on a real Zoom/Teams call: participant separation, meeting-app restart, microphone unplug and the idle-app PID rule are unverified (`TASKS.md`). After a crash the WAV headers cover only the audio up to the last 5 s flush; `recover_header` is not wired in. Settings > Audio and the Recorder keep separate on/off toggles for each source, and Settings > Storage folders do not feed the Recorder yet (it records under `%USERPROFILE%\Documents\MeetingRecorder\Recordings`).
-- Channel-based UI / backend separation (7.5): done for audio capture only (worker thread, command and event channels); ASR and storage have no worker yet.
+- Channel-based UI / backend separation (7.5): done for audio capture and transcription (worker threads, command and event channels); storage has no worker yet.
 - Keyboard navigation inside tables and dropdown popups was not separately verified (Tab order and focus ring on buttons, toggles, nav items were).
 - Reduced-motion preference: the UI has no animation beyond egui defaults.
