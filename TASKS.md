@@ -20,7 +20,7 @@ _None._
   - Acceptance Criteria: partial and final lines appear while recording; Settings "Partial transcription" and "Streaming chunk window" take effect (today they are shown but do nothing).
   - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
 - [ ] Task: Library follow-ups (open items of the real-data work)
-  - Playback: the Recordings player is hidden for real rows; there is no audio output path yet (the row has an "Open folder" button instead).
+  - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
   - Editing transcript text on the detail page (read-only for now).
   - Export: choosing the destination (exports go next to the recording; a Save dialog would need the `rfd` crate and a thread) and WebVTT / DOCX.
   - A folder added or removed outside the app (Explorer) appears only when the screen is opened again: no folder watch and no refresh button.
@@ -131,6 +131,21 @@ _None._
     - PARTIAL failure notice ("Could not export the transcript."): unit test only, not driven in the window.
     - Not verified: Thai screenshot of the toast; opening the SRT in a subtitle player.
   - Commit: branch `feature/export-transcripts` (from `feature/asr-transcription`), not pushed, no PR.
+
+- [x] Task: Play recordings from the Recordings screen (branch `feature/playback`; spec `docs/superpowers/specs/2026-11-25-playback-design.md`, plan `docs/superpowers/plans/2026-11-25-playback.md`)
+  - Built: `src/playback.rs`. `Mixer` sums `mic.wav` and `system.wav` (clamped, a shorter track padded with silence, one track alone is fine, a damaged file or different rates is an error). A `Playback` state machine (play, pause, seek, finish) runs over a `Sink` trait on its own thread behind `PlayerHandle`, whose `stop()` and `Drop` wait until the files are closed. The real sink is WASAPI shared mode, event driven, with `autoconvert`, on the Windows default output device. Pause and seek drop what is buffered and rewind the mixer by that much, so nothing is skipped or repeated. Live rows get a play/pause button; the bottom bar shows the title, "Track: System + Mic Mix", elapsed and total time, a seek bar (click, or drag and release) and a close button. `WavReader` gained `seek_frame`.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 314 passed, 7 ignored (25 new, none needs a sound card; the 7th ignored one is the loopback test below). Tests were written first and seen to fail. Removing the pause rewind, the buffer subtraction in the position, and the player stop before delete each made a test fail. The playback and app tests were stable over repeated runs.
+  - Acceptance checks run on this machine, real exe, mouse clicks, on the real recordings (the 43 s one for most steps):
+    - PASS play: the bar appeared with the real title and "Track: System + Mic Mix"; the position read 00:00:02, then 00:00:08 about 6 s later, so it follows real time; the row button turned into pause.
+    - PASS pause held the position (00:00:03 before and 3 s after); seek by clicking the bar at the middle moved a paused player to 00:00:21 and it stayed paused; resume continued (00:00:23 two seconds later).
+    - PASS clicking near the end finished the recording at 00:00:43 of 00:00:43, with the play icon back on the bar and the row.
+    - PASS delete while playing (a copy made for the test): the delete modal, then the folder was gone from disk, the bar disappeared, and the three other recordings were untouched.
+    - PASS play while recording: the toast "Stop recording before playing."; starting a recording while playing stopped playback with the toast "Playback stopped because a recording started." (the system level meter read -45 dB right after, not the playback).
+    - PASS `#[ignore]` loopback test (`cargo test plays_a_tone -- --ignored`): a 440 Hz tone played through `PlayerHandle::start` was heard on the default output device's loopback (440 Hz amplitude 0.235 while playing, 0.013 before; the position advanced 86880 frames in about 1.8 s; no error). The first version measured overall RMS and failed because other sound on this machine already gave 0.084, so it now measures the tone itself.
+    - Not verified: how it sounds (no one listened; the loopback proves the tone left the app, not its quality); Thai or light-theme screenshots of the bar; a different output device, or unplugging the device while playing (the failure path is covered by a unit test with a fake sink); a recording whose mic and system files differ in length (unit test only); a long meeting.
+  - Known limits: only the mixed track; no speed, volume or output-device choice; one recording at a time; a hot-plugged default device change is not followed.
+  - Open (minor): one run of the full suite failed `asr::download::tests::cancel_keeps_the_part_and_a_second_run_resumes` ("part is 100000 bytes": the cancel raced the 100 KB fake file); it passed 8 of 8 alone and 3 of 3 in full runs afterwards. The test is older than this work and depends on timing.
+  - Commit: branch `feature/playback` (from `feature/export-transcripts`), not pushed, no PR.
 
 ## Rules
 

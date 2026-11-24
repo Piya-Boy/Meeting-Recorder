@@ -97,7 +97,7 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 ## Recordings, Transcripts and Detail with real data (2026-11-24)
 
 - Run with `--audio` (or normally) the three screens list the real session folders; any other dev flag keeps the sample data.
-- Recordings: real rows (name, folder, date, duration, size, status pill), search / date filter / sort work, Open folder icon instead of Play, no bottom player, Transcribe starts a job and the pill shows "Processing n%", Delete opens the existing modal. "Loading recordings..." until the first scan arrives.
+- Recordings: real rows (name, folder, date, duration, size, status pill), search / date filter / sort work, Open folder icon and a Play button, a bottom player for the loaded recording, Transcribe starts a job and the pill shows "Processing n%", Delete opens the existing modal. "Loading recordings..." until the first scan arrives.
 - Transcripts: title, date, duration, "Lines" column, first line as preview; search placeholder without "(SQLite FTS)"; Copy gives the real text.
 - Detail: date, duration, "N lines"; rows with time stamp, You / Others chip, selectable text; no edit hint (read-only).
 - Checked with screenshots of the real exe in English: list, delete modal, processing, transcribed, Transcripts list, detail (aligned chip column). Not screenshotted: Thai, light theme, long transcript.
@@ -106,3 +106,9 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 
 - Transcripts rows and the detail top bar: JSON, SRT and TXT now write the file next to the recording and open Explorer with it selected; the toast says "Exported. The file is in the recording's folder." (or "Could not export the transcript."). Sample rows (dev flags without `--audio`) still say "not wired".
 - Checked with screenshots of the real exe in English (detail page with the toast). Not screenshotted: Thai, light theme.
+
+## Playback with real recordings (2026-11-25)
+
+- Recordings live rows: a Play button before Open folder (it becomes a filled Pause button for the recording that is playing). The bottom bar appears for the loaded recording: play/pause, title, "Track: System + Mic Mix", elapsed time, a seek bar (a click seeks at once; a drag shows the new place and seeks on release), total time, and a close (X) button. The speed chip and the volume icon are drawn only in the sample (preview) mode.
+- New strings (English and Thai): "Play", "Close player", "Stop recording before playing.", "Playback stopped because a recording started.", "Could not play the recording.".
+- Checked with screenshots of the real exe in English: bar while playing, paused, after a seek, at the end, the delete modal while playing, and the two toasts. Not screenshotted: Thai, light theme.

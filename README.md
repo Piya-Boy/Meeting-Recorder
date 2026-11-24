@@ -20,7 +20,7 @@ The user interface is finished. The recording, transcription and storage backend
 | Storage (SQLite index, WAV and transcript files) | WAV and transcript files and the library lists are real; no SQLite index |
 | Exports (TXT, SRT, JSON) | Done: written next to the recording and shown in Explorer |
 
-The Recorder captures real audio (system and microphone as separate WAV files), transcribes it after Stop, and the Recordings, Transcripts and Transcript Detail screens list and open the real session folders. Playback and editing transcript text are not built, and a run with dev flags but without `--audio` still shows sample data. Progress is tracked in [`ROADMAP.md`](ROADMAP.md) and [`TASKS.md`](TASKS.md), and UI details are in [`UI_PROGRESS.md`](UI_PROGRESS.md).
+The Recorder captures real audio (system and microphone as separate WAV files), transcribes it after Stop, and the Recordings, Transcripts and Transcript Detail screens list and open the real session folders. Recordings plays a recording (both tracks mixed, play / pause / seek) but has no speed, volume or output-device choice, and editing transcript text is not built; a run with dev flags but without `--audio` still shows sample data. Progress is tracked in [`ROADMAP.md`](ROADMAP.md) and [`TASKS.md`](TASKS.md), and UI details are in [`UI_PROGRESS.md`](UI_PROGRESS.md).
 
 ## Planned capabilities
 
