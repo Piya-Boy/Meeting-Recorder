@@ -185,6 +185,17 @@ impl SegmentStream {
         }
     }
 
+    /// Emits every segment that is already ready in the buffered audio, for a recording that is
+    /// still going on: the same cuts as `finish`, but the unfinished tail stays buffered.
+    pub fn poll(&mut self, on_segment: &mut dyn FnMut(usize, &[f32])) {
+        while let Some(cut) = find_cut(&self.buf, self.rate) {
+            if cut == 0 {
+                break;
+            }
+            self.emit(cut, on_segment);
+        }
+    }
+
     /// The end of the recording: the rest is cut and emitted.
     pub fn finish(&mut self, on_segment: &mut dyn FnMut(usize, &[f32])) {
         while let Some(cut) = find_cut(&self.buf, self.rate) {
@@ -268,6 +279,46 @@ mod tests {
 
     fn secs(samples: usize) -> f32 {
         samples as f32 / RATE as f32
+    }
+
+    #[test]
+    fn poll_emits_ready_segments_and_keeps_the_tail() {
+        let a = cat(&[tone(3.0), silence(1.5), tone(1.0)]);
+        let mut stream = SegmentStream::new(RATE as u32);
+        let mut live = Vec::new();
+        for block in a.chunks(RATE / 2) {
+            stream.push(block, &mut |s, seg| live.push((s, s + seg.len())));
+            stream.poll(&mut |s, seg| live.push((s, s + seg.len())));
+        }
+        assert_eq!(
+            live.len(),
+            1,
+            "only the first utterance is complete: {live:?}"
+        );
+        assert!(secs(live[0].1) < 3.6, "ends with the speech: {live:?}");
+        assert!(stream.buffered_samples() > RATE / 2, "the tail is kept");
+        stream.finish(&mut |s, seg| live.push((s, s + seg.len())));
+        let whole = split(&a, RATE as u32);
+        assert_eq!(live.len(), whole.len(), "{live:?} vs {whole:?}");
+        for (l, w) in live.iter().zip(&whole) {
+            assert!(l.0.abs_diff(w.0) < RATE / 10 && l.1.abs_diff(w.1) < RATE / 10);
+        }
+    }
+
+    #[test]
+    fn poll_on_silence_only_emits_nothing_and_stays_bounded() {
+        let mut stream = SegmentStream::new(RATE as u32);
+        let mut count = 0;
+        for _ in 0..60 {
+            stream.push(&silence(1.0), &mut |_, _| count += 1);
+            stream.poll(&mut |_, _| count += 1);
+            assert!(
+                stream.buffered_samples() <= 26 * RATE,
+                "grew to {}",
+                stream.buffered_samples()
+            );
+        }
+        assert_eq!(count, 0, "silence is never a segment");
     }
 
     #[test]

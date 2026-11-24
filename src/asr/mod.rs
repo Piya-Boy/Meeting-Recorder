@@ -9,6 +9,7 @@ pub mod engine;
 pub mod features;
 #[cfg(test)]
 mod features_reference;
+pub mod live;
 pub mod model;
 pub mod resample;
 pub mod segment;

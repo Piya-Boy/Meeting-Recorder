@@ -94,6 +94,15 @@ impl WavReader {
         self.total_frames
     }
 
+    /// Looks at the file length again, so a file that is still being written can be followed.
+    /// The length never goes down.
+    pub fn refresh(&mut self) -> io::Result<()> {
+        let len = self.file.metadata()?.len();
+        let frames = len.saturating_sub(self.data_start) / 2;
+        self.total_frames = self.total_frames.max(frames);
+        Ok(())
+    }
+
     /// Moves the read position to `frame` (clamped to the end of the audio).
     pub fn seek_frame(&mut self, frame: u64) -> io::Result<()> {
         let frame = frame.min(self.total_frames);
@@ -135,6 +144,39 @@ mod tests {
         (0..n)
             .map(|i| ((i % 20_000) as i32 - 10_000) as i16)
             .collect()
+    }
+
+    #[test]
+    fn refresh_sees_audio_appended_after_open() {
+        use std::io::Write as _;
+        let dir = crate::audio::temp_dir("wavread-refresh");
+        let path = dir.join("a.wav");
+        let src = ramp(1_000);
+        write_wav(&path, 16_000, &src, false); // still being written: header says 0 bytes
+        let mut r = WavReader::open(&path).unwrap();
+        assert_eq!(r.total_frames(), 1_000);
+        assert_eq!(r.read_block(2_000).unwrap().len(), 1_000);
+        assert!(r.read_block(10).unwrap().is_empty());
+
+        let more: Vec<i16> = (0..500).map(|i| i as i16).collect();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        for v in &more {
+            f.write_all(&v.to_le_bytes()).unwrap();
+        }
+        f.flush().unwrap();
+        assert_eq!(r.total_frames(), 1_000, "unchanged until refresh");
+        r.refresh().unwrap();
+        assert_eq!(r.total_frames(), 1_500);
+        let got = r.read_block(10).unwrap();
+        let want: Vec<f32> = more[..10]
+            .iter()
+            .map(|&v| f32::from(v) / 32_768.0)
+            .collect();
+        assert_eq!(got, want, "reading continues where it stopped");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
