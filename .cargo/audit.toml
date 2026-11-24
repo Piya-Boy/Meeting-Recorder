@@ -1,0 +1,10 @@
+# Read by `cargo audit` (the audit job in .github/workflows/ci.yml).
+[advisories]
+ignore = [
+    # quick-xml 0.30 reaches Cargo.lock only through eframe -> egui-winit -> accesskit_winit ->
+    # accesskit_unix -> atspi -> zbus_xml, the Linux accessibility bridge. The app builds for
+    # Windows only, and `cargo tree -i quick-xml@0.30.0 --target x86_64-pc-windows-msvc` is empty.
+    # Remove these when eframe moves to an accesskit that no longer uses zbus_xml.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
