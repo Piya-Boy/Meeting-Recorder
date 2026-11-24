@@ -60,7 +60,7 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Icons: Phosphor (egui-phosphor) substitutes Lucide.
 - Buttons that need a backend (hardware test, folder picker, optimize DB, export diagnostics, …) show a "not wired up yet (UI preview)" toast.
 - Frameless: Windows 11 snap-layout flyout on the maximise button is not available (custom button); drag-to-edge snapping and Win+Arrows still work. Window is resizable (min 1200×760); layouts use flexible columns, but only 1280×800 was screenshot-verified.
-- Mock data: ASR, SQLite and exports do not exist yet. Audio capture is real (see `TASKS.md`); the Recorder uses it when started normally or with `--audio`, and keeps the old mock behavior for other dev-flag runs.
+- Mock data: exports and the SQLite index do not exist yet. Audio capture, transcription and the Recordings / Transcripts / Detail lists are real (see `TASKS.md`); they are used when the app starts normally or with `--audio`, and other dev-flag runs keep the sample data.
 - Nothing is committed: repo has no commits or remote and the user has not asked for one.
 
 ## Language switching (English / Thai)
@@ -82,7 +82,7 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Preferences: `src/settings_store.rs` writes `%APPDATA%\MeetingRecorder\settings.ini` (key=value, atomic write, unknown keys ignored) when theme, accent, font scale, language or a general toggle changes. Verified with two real launches.
 - Shortcuts: Ctrl+Shift+R start/stop, P pause/resume, A auto-scroll, C copy transcript (disabled while a modal is open). Verified with real key presses.
 - Focus: after Tab a blue ring outlines the focused control (cleared on mouse press); the sidebar logo is only focusable when it expands a collapsed sidebar.
-- Engine: mock `Loading` (1.5 s) to `Ready`, or forced `Error`; shown as a badge on the Recorder, a notice when unavailable, and a pill in Settings > Transcription.
+- Engine: in preview runs a mock `Loading` (1.5 s) to `Ready`, or forced `Error`; in a normal run the state comes from the transcription worker (model missing, downloading, loading, ready, error). Shown as a badge on the Recorder, a notice when unavailable, and a pill in Settings > Transcription.
 - Sizes: checked at 1200x760, 1280x800, maximised, English and Thai. Fixed: timer overlapping the sample-rate label (compact 28px timer when narrow), clipped Thai "Pause" label (now "พัก").
 - Not verified: arrow-key navigation inside tables and dropdown popups.
 

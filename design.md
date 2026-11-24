@@ -551,7 +551,7 @@ The UI migration is considered complete when:
 - [x] Buttons, inputs, dropdowns, dialogs, and tables have functional interactions. (UI-level; backend actions show a toast)
 - [x] Empty, loading, success, warning, and error states are represented. (engine loading / ready / unavailable included)
 - [x] Window resizing does not cause important controls to overlap or disappear. (screenshot-verified at 1200x760, 1280x800 and maximised; recorder timer switches to the compact size when narrow)
-- [ ] UI work does not block on audio, database, or transcription tasks. (no backend exists yet; channel-based separation not built)
+- [ ] UI work does not block on audio, database, or transcription tasks. (audio capture and transcription run on worker threads behind command and event channels; storage reads folders on a background scan)
 - [x] No runtime dependency on the original Stitch HTML is required.
 
 ## 14. Source Files
