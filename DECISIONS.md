@@ -225,3 +225,12 @@ _Add decisions below._
 - Alternatives: A native Save dialog through the `rfd` crate (new dependency, and a blocking call that needs its own thread and a channel); clipboard only (already exists as Copy).
 - Consequences: No choice of destination: the user copies the file from Explorer. An existing `transcript.txt` keeps the labels of the language it was written in. Revisit with a Save dialog if users ask.
 - References: `src/export.rs`, `docs/superpowers/specs/2026-11-25-transcript-export-design.md`
+
+### 2026-11-25 - Playback: both tracks mixed, WASAPI through the crate already used, Windows default device
+
+- Status: Accepted
+- Context: The Recordings play button was hidden for real rows because the app had no audio output. The user said "do it" to "mixed or one track at a time?" without choosing.
+- Decision: Play `mic.wav` and `system.wav` summed into one mono stream (clamped to the valid range), through WASAPI shared mode on the Windows default output device. The render code uses the `wasapi` crate that capture already uses, with `autoconvert` so Windows converts from the file's rate. Pause and seek stop the stream, drop what was buffered and take the mixer back by that many frames. Playing is refused while a recording is in progress, and a recording that starts stops playback, because the system track is a loopback of everything the PC plays and would record the playback. A damaged track file is an error, not a silent fall back to the other track. The player is a thread behind a handle whose `stop()` and `Drop` wait for the files to be closed, so deleting the folder works.
+- Alternatives: `cpal` or `rodio` (a new dependency tree for something the existing crate does); decoding the whole file into memory (one hour of two tracks is hundreds of MB; the player streams blocks from disk instead); one track at a time with a selector (more UI, and the user did not choose it).
+- Consequences: Voices that overlap are summed and can clip (the clamp makes that audible, not silent). No volume, speed or device choice yet. Changing the default device while playing is not followed. Tests use a fake sink, so only one `#[ignore]` test touches the real device.
+- References: `src/playback.rs`, `docs/superpowers/specs/2026-11-25-playback-design.md`

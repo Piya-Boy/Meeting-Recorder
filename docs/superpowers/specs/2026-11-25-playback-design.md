@@ -1,8 +1,9 @@
 # Playback of real recordings — design
 
 Date: 2026-11-25. Branch `feature/playback` (from `feature/export-transcripts`, PR #4).
-Status: the user answered "ทำเลย" to the proposal "Playback next, mixed or one track at a time?" without choosing,
-so the author chose the mixed default. Every call below is the author's and is also a ledger ruling.
+Status: implemented (results in `TASKS.md`). The user answered "ทำเลย" to the proposal "Playback next, mixed or one
+track at a time?" without choosing, so the author chose the mixed default. Every call below is the author's and is
+also a ledger ruling.
 
 ## Intent
 
