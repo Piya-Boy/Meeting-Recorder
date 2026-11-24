@@ -24,13 +24,14 @@
 - [x] Playback of recordings (both tracks mixed, play / pause / seek, WASAPI default device): checked on this machine with the real exe and a loopback test; no speed, volume or device choice
 - [x] Live transcript while recording (grey preview text a few seconds behind the speech, a final line after each pause, and the final transcript replaces them after Stop): checked on this machine with the real exe and model; a person speaking into the microphone not tried
 - [x] Transcription language (Thai, or Thai + English with English words in Latin letters) and word fixes: checked on this machine with the real exe and model; an ear-checked accuracy reference is open
+- [x] Update check: asks GitHub Releases at start-up (once a day, can be turned off) and from Settings > Advanced, and tells the user when a newer version exists; it does not install anything; checked on this machine with the real exe against a fake server and the real GitHub
 - [x] Persist settings
 
 ### M3 - Stabilization (Not Started)
 - [ ] Error handling
 - [ ] Performance review
 - [ ] Security review
-- [ ] Release validation (installer, release-build check)
+- [ ] Release validation (installer, release-build check; a release workflow exists and has not run on GitHub yet)
 
 ## Status Values
 

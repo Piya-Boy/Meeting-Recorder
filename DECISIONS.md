@@ -270,3 +270,12 @@ _Add decisions below._
 - Alternatives: Beam search (more decoding work, no measured gain, rewrote words both ways); hotword boosting (a small gain at best, damage when stronger, and the model still cannot write a word it does not hear); choosing the prompt per segment by the model's confidence (two encoder runs, not tried).
 - Consequences: A user can fix recurring mistakes deterministically, but must list each wrong form; fixes apply to transcripts made after the rule is added. The numbers need re-measuring once a person has checked the reference by ear (`TASKS.md`).
 - References: `src/asr/glossary.rs`, `src/asr/engine.rs`, `docs/superpowers/specs/2026-11-25-language-and-word-fixes-design.md`
+
+### 2026-11-25 - Updates: tell the user, do not install
+
+- Status: Accepted
+- Context: A user with an old build has no way to learn that a newer one exists. The app is one unsigned exe, built from a public GitHub repository that has no release yet.
+- Decision: The app asks GitHub Releases for the latest release at start-up (once a day, on by default, can be turned off) and from Settings > Advanced, and says when a greater `N.N.N` exists. It opens the release page in the browser and installs nothing. The link is built by the app from the validated version and only a link of that form is opened. A 404 (no release yet), a draft, a pre-release or a tag that is not `vN.N.N` mean "up to date". A workflow builds a zip and a SHA-256 file and makes a draft Release from a version tag; publishing the draft is manual.
+- Alternatives: Download, check SHA-256 and replace the exe on the next start (a checksum in the same Release does not protect against a hijacked account, so it needs a signature and a key inside the app); the same with a confirmation (still needs signing); no check at all.
+- Consequences: The check sends the user's IP address and `meeting-recorder/<version>` to GitHub, so the switch says so; there is no offline or proxy handling beyond a 15 s limit. Updating is still a manual download. Self-update can grow from this once releases are signed.
+- References: `src/update.rs`, `.github/workflows/release.yml`, `docs/superpowers/specs/2026-11-25-update-check-design.md`

@@ -129,3 +129,10 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 
 - Settings > Transcription: "Language" is now a select ("Thai", "Thai + English") with the description "Thai writes every word in Thai letters; Thai + English writes English words in Latin letters." Below the live settings, "Word fixes": a description, a multi-line box (hint "มอล, หมอก = มอก.") and a line "N fixes", plus "· M lines not understood (use wrong = right)" in the warning colour when a line is not a rule. English and Thai strings; the old "Primary recognition language." string is gone.
 - Checked with screenshots of the real exe in English: the select showing "Thai + English" read from `settings.ini`, and Latin words in the live and final Recorder text. Not screenshotted: the word-fix box with typed rules, Thai, light theme.
+
+## Update check (2026-11-25)
+
+- Settings > General: a "Check for updates" row (switch, default on) with the description "Asks GitHub once a day whether a newer version exists. No recording or personal data is sent."
+- Settings > Advanced > About: the version line comes from `Cargo.toml`; a row below it holds "Check for updates", "Open download page" and a status line. The first try put these buttons in the header row and cut the version label, so they moved.
+- Sidebar footer: "Update available: vN.N.N" in the accent colour above the version when a newer version was found; the About modal and the footer show the version from `Cargo.toml`. English and Thai strings.
+- Checked with screenshots of the real exe in English (dark theme): General, Advanced (newer version found, and up to date) and the Recorder with the toast and the sidebar link. Not screenshotted: Thai, light theme, the collapsed sidebar.
