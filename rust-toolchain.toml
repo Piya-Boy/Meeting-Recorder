@@ -1,0 +1,8 @@
+# The toolchain CI and local builds use. A newer stable can bring new clippy lints that fail
+# `-D warnings` (Rust 1.100 flags `chunks_exact` in 72 places), so it is raised on purpose, not
+# by the runner. rustup 1.28 and later does not install it by itself: CI runs
+# `rustup toolchain install` first.
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
