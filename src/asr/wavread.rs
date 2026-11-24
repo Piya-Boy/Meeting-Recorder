@@ -11,6 +11,7 @@ use std::path::Path;
 pub struct WavReader {
     file: File,
     rate: u32,
+    data_start: u64,
     total_frames: u64,
     read_frames: u64,
 }
@@ -71,6 +72,7 @@ impl WavReader {
                     return Ok(WavReader {
                         file,
                         rate,
+                        data_start: pos,
                         total_frames,
                         read_frames: 0,
                     });
@@ -90,6 +92,15 @@ impl WavReader {
 
     pub fn total_frames(&self) -> u64 {
         self.total_frames
+    }
+
+    /// Moves the read position to `frame` (clamped to the end of the audio).
+    pub fn seek_frame(&mut self, frame: u64) -> io::Result<()> {
+        let frame = frame.min(self.total_frames);
+        self.file
+            .seek(SeekFrom::Start(self.data_start + frame * 2))?;
+        self.read_frames = frame;
+        Ok(())
     }
 
     /// Up to `max_frames` samples scaled to [-1, 1]; empty at the end of the file.
@@ -124,6 +135,32 @@ mod tests {
         (0..n)
             .map(|i| ((i % 20_000) as i32 - 10_000) as i16)
             .collect()
+    }
+
+    #[test]
+    fn seek_frame_moves_the_read_position() {
+        let dir = crate::audio::temp_dir("wavread-seek");
+        let path = dir.join("a.wav");
+        let src = ramp(1_000);
+        write_wav(&path, 16_000, &src, true);
+        let mut r = WavReader::open(&path).unwrap();
+        let _ = r.read_block(300).unwrap();
+        r.seek_frame(100).unwrap();
+        let got = r.read_block(5).unwrap();
+        let want: Vec<f32> = src[100..105]
+            .iter()
+            .map(|&v| f32::from(v) / 32_768.0)
+            .collect();
+        assert_eq!(got, want);
+        // Back to the start, and past the end (clamped: nothing left to read).
+        r.seek_frame(0).unwrap();
+        assert_eq!(r.read_block(1).unwrap().len(), 1);
+        r.seek_frame(5_000).unwrap();
+        assert!(r.read_block(10).unwrap().is_empty());
+        // Seeking works after the end was reached, too.
+        r.seek_frame(999).unwrap();
+        assert_eq!(r.read_block(10).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

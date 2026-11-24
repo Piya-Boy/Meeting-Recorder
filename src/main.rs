@@ -7,6 +7,8 @@ mod export;
 mod i18n;
 mod library;
 mod modals;
+#[allow(dead_code)] // wired to the Recordings screen in a later task
+mod playback;
 mod screens;
 mod settings_store;
 mod shell;
