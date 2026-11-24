@@ -52,6 +52,15 @@ fn main() -> eframe::Result<()> {
                     audio::worker::WorkerConfig::default(),
                 ));
             }
+            // The transcription worker only reads files and runs the model; it is also
+            // started for `--audio`-style dev runs only when asked, so screenshots stay
+            // reproducible.
+            if !dev_flags || args.iter().any(|a| a == "--asr") {
+                state.enable_asr(asr::worker::AsrHandle::spawn(
+                    std::sync::Arc::new(asr::worker::OrtFactory),
+                    asr::worker::AsrConfig::default(),
+                ));
+            }
             Ok(Box::new(state))
         }),
     )

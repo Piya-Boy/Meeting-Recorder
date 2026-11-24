@@ -58,9 +58,14 @@ fn clock(d: Duration) -> String {
     format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
 }
 
-/// Transcription engine readiness (mock until a real engine exists).
+/// Transcription engine readiness. `Missing` and `Downloading` are about the model files;
+/// `Loading`, `Ready` and `Error` keep their meaning from the preview.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EngineState {
+    /// The model is not installed.
+    Missing,
+    /// The model is being downloaded.
+    Downloading,
     Loading,
     #[default]
     Ready,
@@ -929,6 +934,18 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                         theme.error_text,
                         egui_phosphor::regular::WARNING,
                         tr("OpenThai ASR · Unavailable"),
+                    ),
+                    EngineState::Missing => (
+                        theme.outline,
+                        theme.on_surface_variant,
+                        egui_phosphor::regular::DOWNLOAD_SIMPLE,
+                        tr("OpenThai ASR · Model not installed"),
+                    ),
+                    EngineState::Downloading => (
+                        theme.warning,
+                        theme.warning_text,
+                        egui_phosphor::regular::SPINNER_GAP,
+                        tr("OpenThai ASR · Downloading model..."),
                     ),
                 };
                 tinted_badge(ui, tint, text_color, &format!("{icon} {label}"));

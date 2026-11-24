@@ -48,6 +48,10 @@ pub enum Command {
     },
     /// Stops the running transcription (not the ones waiting).
     CancelTranscribe,
+    /// Frees the loaded model and deletes the model folder of `precision`.
+    DeleteModel {
+        precision: Precision,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -243,6 +247,7 @@ struct Job {
 enum Work {
     Transcribe(Job),
     Download(Precision),
+    Delete(Precision),
 }
 
 /// What the worker shares with the code running a job: the channels, the queue and the flags.
@@ -297,6 +302,16 @@ impl Io {
                     .any(|w| matches!(w, Work::Download(p) if *p == precision));
                 if !queued {
                     self.queue.borrow_mut().push_back(Work::Download(precision));
+                }
+            }
+            Command::DeleteModel { precision } => {
+                let queued = self
+                    .queue
+                    .borrow()
+                    .iter()
+                    .any(|w| matches!(w, Work::Delete(p) if *p == precision));
+                if !queued {
+                    self.queue.borrow_mut().push_back(Work::Delete(precision));
                 }
             }
             Command::Transcribe {
@@ -372,6 +387,7 @@ impl Worker {
                 match work {
                     Work::Transcribe(job) => self.transcribe(&job),
                     Work::Download(p) => self.download(p),
+                    Work::Delete(p) => self.delete(p),
                 }
                 continue;
             }
@@ -428,6 +444,18 @@ impl Worker {
             Ok(()) => ModelStatus::Ready,
             Err(e) => ModelStatus::Failed(e),
         }));
+    }
+
+    fn delete(&mut self, p: Precision) {
+        // The model files stay open while it is loaded; release them first.
+        self.loaded = None;
+        let dir = self.io.model_dir(p);
+        let event = match std::fs::remove_dir_all(&dir) {
+            Ok(()) => ModelStatus::Missing,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ModelStatus::Missing,
+            Err(e) => ModelStatus::Failed(format!("Cannot delete {}: {e}", dir.display())),
+        };
+        self.io.emit(Event::Model(event));
     }
 
     fn transcribe(&mut self, job: &Job) {
@@ -612,12 +640,21 @@ mod tests {
         fail_load: Option<String>,
         fail_recognize: Option<String>,
         delay: Duration,
+        /// Recognizers dropped so far.
+        drops: Arc<AtomicU32>,
     }
 
     struct CountingRecognizer {
         calls: Arc<AtomicU32>,
         fail: Option<String>,
         delay: Duration,
+        drops: Arc<AtomicU32>,
+    }
+
+    impl Drop for CountingRecognizer {
+        fn drop(&mut self) {
+            self.drops.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     impl Recognizer for CountingRecognizer {
@@ -641,6 +678,7 @@ mod tests {
                 calls: self.calls.clone(),
                 fail: self.fail_recognize.clone(),
                 delay: self.delay,
+                drops: self.drops.clone(),
             }))
         }
     }
@@ -1204,6 +1242,67 @@ mod tests {
         rig.transcribe_with(&b, 6);
         rig.wait_done();
         assert_eq!(rig.factory.loads.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn deleting_the_model_frees_it_and_removes_its_folder() {
+        let mut rig = Rig::new();
+        let dir = rig.session("a", Some(&[speech(2.0)]), None);
+        rig.transcribe(&dir);
+        rig.wait_done();
+        let model_dir = model::model_dir_in(&rig.base.join("models"), Precision::Int8);
+        assert!(model_dir.is_dir());
+        assert_eq!(
+            rig.factory.drops.load(Ordering::SeqCst),
+            0,
+            "the model is still loaded"
+        );
+
+        rig.h().send(Command::DeleteModel {
+            precision: Precision::Int8,
+        });
+        rig.wait("missing", |e| {
+            matches!(e, Event::Model(ModelStatus::Missing))
+        });
+        assert!(!model_dir.exists());
+        assert_eq!(
+            rig.factory.drops.load(Ordering::SeqCst),
+            1,
+            "the loaded model was released"
+        );
+
+        rig.transcribe(&dir);
+        let (_, msg) = rig.wait_error();
+        assert_eq!(msg, "Model is not installed");
+    }
+
+    #[test]
+    fn deleting_a_model_that_is_not_there_is_not_an_error() {
+        let mut rig = Rig::with(FakeFactory::default(), Duration::from_secs(300), false);
+        rig.h().send(Command::DeleteModel {
+            precision: Precision::Fp32,
+        });
+        rig.wait("missing", |e| {
+            matches!(e, Event::Model(ModelStatus::Missing))
+        });
+    }
+
+    #[test]
+    fn deleting_one_precision_keeps_the_other() {
+        let mut rig = Rig::new();
+        install_fake_model(&rig.base.join("models"), Precision::Fp32);
+        rig.h().send(Command::DeleteModel {
+            precision: Precision::Fp32,
+        });
+        rig.wait("missing", |e| {
+            matches!(e, Event::Model(ModelStatus::Missing))
+        });
+        rig.h().send(Command::CheckModel {
+            precision: Precision::Int8,
+        });
+        rig.wait("int8 still ready", |e| {
+            matches!(e, Event::Model(ModelStatus::Ready))
+        });
     }
 
     #[test]

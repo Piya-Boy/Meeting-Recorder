@@ -1,10 +1,12 @@
+use crate::asr::model::{ModelStatus, Precision};
+use crate::asr::worker::{AsrHandle, Command as AsrCommand, EngineEvent, Event as AsrEvent};
 use crate::audio::session::{Command, Event};
 use crate::audio::worker::AudioHandle;
 use crate::i18n::tr;
 use egui::Ui;
 
 use crate::screens::{
-    recorder::{draw_recorder_screen, RecorderScreen},
+    recorder::{draw_recorder_screen, EngineState, RecorderScreen},
     recordings::{draw_recordings_screen, RecordingsScreen},
     settings::{
         advanced::{draw_settings_advanced, SettingsAdvancedScreen},
@@ -13,7 +15,9 @@ use crate::screens::{
         category_rail as draw_settings_category_rail,
         general::{draw_settings_general, SettingsGeneralScreen},
         storage::{draw_settings_storage, SettingsStorageScreen},
-        transcription::{draw_settings_transcription, SettingsTranscriptionScreen},
+        transcription::{
+            draw_settings_transcription, threads_index, ModelAction, SettingsTranscriptionScreen,
+        },
     },
     transcript_detail::{draw_transcript_detail_screen, TranscriptDetailScreen},
     transcripts::{draw_transcripts_screen, TranscriptsScreen},
@@ -126,6 +130,14 @@ pub struct AppState {
     pub settings_advanced: SettingsAdvancedScreen,
     /// Devices Windows reports and the ones picked (Recorder and Settings > Audio share it).
     pub audio_choice: AudioChoice,
+    /// The transcription worker; `None` in preview mode (dev flags, tests).
+    asr: Option<AsrHandle>,
+    /// Precision the worker was last asked about.
+    asr_precision_sent: Precision,
+    /// One-shot text for a toast about the model (taken once per frame).
+    asr_notice: Option<String>,
+    /// A delete was sent and its answer has not come yet.
+    asr_deleting: bool,
 
     /// Whether preference changes are written to disk (off for dev-flag runs and tests).
     persist: bool,
@@ -152,6 +164,10 @@ impl Default for AppState {
             settings_appearance: SettingsAppearanceScreen::default(),
             settings_advanced: SettingsAdvancedScreen::default(),
             audio_choice: AudioChoice::default(),
+            asr: None,
+            asr_precision_sent: Precision::Int8,
+            asr_notice: None,
+            asr_deleting: false,
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
@@ -161,7 +177,7 @@ impl Default for AppState {
 
 impl AppState {
     /// Dev/preview flags: `--screen=<name>`, `--theme=light|dark`,
-    /// `--state=<recorder state>`, `--modal=help|about|delete`, `--lang=en|th`, `--engine=loading|ready|error`.
+    /// `--state=<recorder state>`, `--modal=help|about|delete`, `--lang=en|th`, `--engine=loading|ready|error|missing|downloading`.
     /// Unknown values are ignored.
     pub fn from_args(args: impl Iterator<Item = String>) -> Self {
         let mut state = Self::default();
@@ -198,16 +214,26 @@ impl AppState {
                     _ => {}
                 }
             } else if let Some(engine) = arg.strip_prefix("--engine=") {
-                use crate::screens::recorder::EngineState;
                 let forced = match engine {
                     "loading" => Some(EngineState::Loading),
                     "ready" => Some(EngineState::Ready),
                     "error" => Some(EngineState::Error),
+                    "missing" => Some(EngineState::Missing),
+                    "downloading" => Some(EngineState::Downloading),
                     _ => None,
                 };
                 if let Some(e) = forced {
                     state.recorder.engine = e;
                     state.recorder.engine_auto = false;
+                    state.settings_transcription.model_status = match e {
+                        EngineState::Ready => ModelStatus::Ready,
+                        EngineState::Downloading => ModelStatus::Downloading {
+                            done: 412_000_000,
+                            total: 883_000_000,
+                        },
+                        EngineState::Error => ModelStatus::Failed("connection lost".to_owned()),
+                        EngineState::Missing | EngineState::Loading => ModelStatus::Missing,
+                    };
                 }
             } else if let Some(lang) = arg.strip_prefix("--lang=") {
                 match lang {
@@ -231,6 +257,8 @@ impl AppState {
         self.settings_general.confirm_delete = saved.confirm_delete;
         self.audio_choice.system_id = saved.system_device;
         self.audio_choice.mic_id = saved.mic_device;
+        self.settings_transcription.precision = Precision::from_str_lossy(&saved.asr_precision);
+        self.settings_transcription.threads_idx = threads_index(saved.asr_threads);
         self.saved = self.snapshot();
         self.persist = true;
     }
@@ -246,6 +274,95 @@ impl AppState {
             confirm_delete: self.settings_general.confirm_delete,
             system_device: self.audio_choice.system_id.clone(),
             mic_device: self.audio_choice.mic_id.clone(),
+            asr_precision: self.settings_transcription.precision.as_str().to_owned(),
+            asr_threads: self.settings_transcription.threads() as u32,
+        }
+    }
+
+    /// Connects the transcription worker and asks whether the model is installed.
+    pub fn enable_asr(&mut self, handle: AsrHandle) {
+        let precision = self.settings_transcription.precision;
+        self.recorder.engine_auto = false;
+        self.recorder.engine = EngineState::Missing;
+        self.asr_precision_sent = precision;
+        handle.send(AsrCommand::CheckModel { precision });
+        self.asr = Some(handle);
+    }
+
+    /// Applies one report from the transcription worker.
+    pub fn apply_asr_event(&mut self, event: AsrEvent) {
+        match event {
+            AsrEvent::Model(status) => {
+                let was_downloading = matches!(
+                    self.settings_transcription.model_status,
+                    ModelStatus::Downloading { .. } | ModelStatus::Verifying
+                );
+                self.recorder.engine = match &status {
+                    ModelStatus::Ready => EngineState::Ready,
+                    ModelStatus::Missing => EngineState::Missing,
+                    ModelStatus::Downloading { .. } => EngineState::Downloading,
+                    ModelStatus::Verifying => EngineState::Loading,
+                    ModelStatus::Failed(_) => EngineState::Error,
+                };
+                match &status {
+                    ModelStatus::Ready if was_downloading => {
+                        self.asr_notice = Some("Model downloaded".to_owned());
+                    }
+                    ModelStatus::Failed(_) if was_downloading => {
+                        self.asr_notice = Some("Download failed".to_owned());
+                    }
+                    ModelStatus::Missing if self.asr_deleting => {
+                        self.asr_notice = Some("Model deleted".to_owned());
+                    }
+                    _ => {}
+                }
+                if !matches!(
+                    status,
+                    ModelStatus::Downloading { .. } | ModelStatus::Verifying
+                ) {
+                    self.asr_deleting = false;
+                }
+                self.settings_transcription.model_status = status;
+            }
+            AsrEvent::Engine(EngineEvent::Loading) => self.recorder.engine = EngineState::Loading,
+            AsrEvent::Engine(EngineEvent::Ready) => self.recorder.engine = EngineState::Ready,
+            AsrEvent::Engine(EngineEvent::Failed(_)) => self.recorder.engine = EngineState::Error,
+            // Jobs are shown by the Recorder (wired in the next task).
+            _ => {}
+        }
+    }
+
+    /// Text for a toast about the model, once.
+    pub fn take_asr_notice(&mut self) -> Option<String> {
+        self.asr_notice.take()
+    }
+
+    /// Passes worker reports to the screens and the screens' requests to the worker.
+    pub fn sync_asr(&mut self) {
+        let events = match &self.asr {
+            Some(asr) => asr.try_events(),
+            None => return,
+        };
+        for event in events {
+            self.apply_asr_event(event);
+        }
+        let precision = self.settings_transcription.precision;
+        let action = self.settings_transcription.action.take();
+        let Some(asr) = &self.asr else {
+            return;
+        };
+        if precision != self.asr_precision_sent {
+            self.asr_precision_sent = precision;
+            asr.send(AsrCommand::CheckModel { precision });
+        }
+        match action {
+            Some(ModelAction::Download) => asr.send(AsrCommand::DownloadModel { precision }),
+            Some(ModelAction::Cancel) => asr.send(AsrCommand::CancelDownload),
+            Some(ModelAction::Delete) => {
+                self.asr_deleting = true;
+                asr.send(AsrCommand::DeleteModel { precision });
+            }
+            None => {}
         }
     }
 
@@ -366,6 +483,19 @@ impl eframe::App for AppState {
         }
         if let Some(notice) = self.recorder.take_notice() {
             crate::toast::show(ctx, notice);
+        }
+        self.sync_asr();
+        if let Some(notice) = self.take_asr_notice() {
+            crate::toast::show(ctx, crate::i18n::tr(&notice));
+        }
+        if self.asr.is_some() {
+            // Worker events do not wake egui by themselves.
+            let busy = matches!(
+                self.recorder.engine,
+                EngineState::Downloading | EngineState::Loading
+            );
+            let wait = if busy { 100 } else { 500 };
+            ctx.request_repaint_after(std::time::Duration::from_millis(wait));
         }
         if self.recorder.audio.is_some()
             && !matches!(
@@ -533,6 +663,174 @@ mod tests {
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
             .into_iter()
+    }
+
+    struct NoModel;
+    impl crate::asr::worker::RecognizerFactory for NoModel {
+        fn load(
+            &self,
+            _dir: &std::path::Path,
+            _threads: usize,
+        ) -> Result<Box<dyn crate::asr::engine::Recognizer>, String> {
+            Err("unused".into())
+        }
+    }
+
+    fn asr_handle(models: &std::path::Path) -> crate::asr::worker::AsrHandle {
+        crate::asr::worker::AsrHandle::spawn(
+            std::sync::Arc::new(NoModel),
+            crate::asr::worker::AsrConfig {
+                models_base: Some(models.to_path_buf()),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn install(base: &std::path::Path, p: crate::asr::model::Precision) -> std::path::PathBuf {
+        use crate::asr::model::{self, Precision};
+        let dir = model::model_dir_in(base, p);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (encoder, data) = match p {
+            Precision::Int8 => ("encoder.int8.onnx", "encoder.int8.onnx.data"),
+            Precision::Fp32 => ("encoder.onnx", "encoder.onnx.data"),
+        };
+        for f in [encoder, "decoder_joint.onnx", "tokens.txt"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        std::fs::write(dir.join(data), b"weights").unwrap();
+        model::mark_ready(&dir, data).unwrap();
+        dir
+    }
+
+    fn wait_for(a: &mut AppState, want: crate::asr::model::ModelStatus) {
+        let t = std::time::Instant::now();
+        while a.settings_transcription.model_status != want {
+            a.sync_asr();
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(5),
+                "never became {want:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn model_events_drive_engine_and_model_status() {
+        use crate::asr::model::ModelStatus as M;
+        use crate::asr::worker::{EngineEvent, Event as E};
+        use crate::screens::recorder::EngineState as S;
+        let mut a = AppState::default();
+        let cases = [
+            (E::Model(M::Ready), S::Ready),
+            (E::Model(M::Missing), S::Missing),
+            (
+                E::Model(M::Downloading {
+                    done: 50,
+                    total: 100,
+                }),
+                S::Downloading,
+            ),
+            (E::Model(M::Verifying), S::Loading),
+            (E::Model(M::Failed("x".into())), S::Error),
+            (E::Engine(EngineEvent::Loading), S::Loading),
+            (E::Engine(EngineEvent::Ready), S::Ready),
+            (E::Engine(EngineEvent::Failed("x".into())), S::Error),
+        ];
+        for (event, engine) in cases {
+            let label = format!("{event:?}");
+            a.apply_asr_event(event);
+            assert_eq!(a.recorder.engine, engine, "{label}");
+        }
+        a.apply_asr_event(E::Model(M::Downloading {
+            done: 50,
+            total: 100,
+        }));
+        assert_eq!(
+            a.settings_transcription.model_status,
+            M::Downloading {
+                done: 50,
+                total: 100
+            }
+        );
+        a.apply_asr_event(E::Model(M::Ready));
+        assert_eq!(a.settings_transcription.model_status, M::Ready);
+    }
+
+    #[test]
+    fn download_finishing_or_failing_raises_a_notice() {
+        use crate::asr::model::ModelStatus as M;
+        use crate::asr::worker::Event as E;
+        let mut a = AppState::default();
+        a.apply_asr_event(E::Model(M::Downloading { done: 1, total: 2 }));
+        assert_eq!(a.take_asr_notice(), None);
+        a.apply_asr_event(E::Model(M::Ready));
+        assert_eq!(a.take_asr_notice().as_deref(), Some("Model downloaded"));
+        assert_eq!(a.take_asr_notice(), None, "taken once");
+        // a plain check that finds the model is not news
+        a.apply_asr_event(E::Model(M::Ready));
+        assert_eq!(a.take_asr_notice(), None);
+        a.apply_asr_event(E::Model(M::Downloading { done: 1, total: 2 }));
+        a.apply_asr_event(E::Model(M::Failed("cancelled".into())));
+        assert_eq!(a.take_asr_notice().as_deref(), Some("Download failed"));
+    }
+
+    #[test]
+    fn snapshot_carries_precision_and_threads() {
+        let mut a = AppState::default();
+        a.settings_transcription.precision = crate::asr::model::Precision::Fp32;
+        a.settings_transcription.threads_idx = 2;
+        let p = a.snapshot();
+        assert_eq!(p.asr_precision, "fp32");
+        assert_eq!(p.asr_threads, 8);
+
+        let mut b = AppState::default();
+        b.enable_persistence(p);
+        assert_eq!(
+            b.settings_transcription.precision,
+            crate::asr::model::Precision::Fp32
+        );
+        assert_eq!(b.settings_transcription.threads(), 8);
+    }
+
+    #[test]
+    fn changing_precision_asks_the_worker_about_the_new_model() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::EngineState;
+        let base = crate::audio::temp_dir("app-precision");
+        install(&base, Precision::Fp32); // only fp32 is installed
+
+        let mut a = AppState::default();
+        a.enable_asr(asr_handle(&base));
+        wait_for(&mut a, ModelStatus::Missing); // int8 is the default
+        assert_eq!(a.recorder.engine, EngineState::Missing);
+
+        a.settings_transcription.precision = Precision::Fp32;
+        wait_for(&mut a, ModelStatus::Ready);
+        assert_eq!(a.recorder.engine, EngineState::Ready);
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn delete_button_reaches_the_worker() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::settings::transcription::ModelAction;
+        let base = crate::audio::temp_dir("app-delete");
+        let dir = install(&base, Precision::Int8);
+
+        let mut a = AppState::default();
+        a.enable_asr(asr_handle(&base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.settings_transcription.action = Some(ModelAction::Delete);
+        wait_for(&mut a, ModelStatus::Missing);
+        assert!(!dir.exists());
+        assert_eq!(a.take_asr_notice().as_deref(), Some("Model deleted"));
+        assert!(
+            a.settings_transcription.action.is_none(),
+            "action taken once"
+        );
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
