@@ -78,7 +78,6 @@ const THAI: &[(&str, &str)] = &[
     ("%", "%"),
     ("100% (Default)", "100% (ค่าเริ่มต้น)"),
     ("4 threads", "4 เธรด"),
-    ("6 threads (Auto)", "6 เธรด (อัตโนมัติ)"),
     ("8 threads", "8 เธรด"),
     ("90%", "90%"),
     ("About", "เกี่ยวกับ"),
@@ -312,11 +311,104 @@ const THAI: &[(&str, &str)] = &[
     ("Transcription engine unavailable. Audio is still recorded; transcribe it later from Recordings.", "เอนจินถอดเสียงใช้งานไม่ได้ ระบบยังบันทึกเสียงอยู่ สามารถถอดเสียงภายหลังจากหน้าการบันทึก"),
     ("48,000 Hz matches Windows WASAPI shared mode and resamples cleanly for OpenThai ASR.", "48,000 Hz ตรงกับโหมดแชร์ของ Windows WASAPI และแปลงอัตราสุ่มเป็น OpenThai ASR ได้เรียบร้อย"),
     ("128.4 MB used · Safe to clear when idle", "ใช้ไป 128.4 MB · ล้างได้อย่างปลอดภัยเมื่อไม่ได้ใช้งาน"),
+    ("Missing", "ไม่มี"),
+    ("Downloading", "กำลังดาวน์โหลด"),
+    ("Download model", "ดาวน์โหลดโมเดล"),
+    ("Delete model", "ลบโมเดล"),
+    ("Model folder", "โฟลเดอร์โมเดล"),
+    ("Precision", "ชนิดน้ำหนักโมเดล"),
+    ("Model", "โมเดล"),
+    ("Model weights. fp32 is larger and slower; int8 is the default.", "น้ำหนักของโมเดล fp32 ใหญ่และช้ากว่า ค่าเริ่มต้นคือ int8"),
+    ("Downloaded once, then kept on this computer.", "ดาวน์โหลดครั้งเดียว แล้วเก็บไว้ในเครื่องนี้"),
+    ("Model is not installed", "ยังไม่ได้ติดตั้งโมเดล"),
+    ("Model downloaded", "ดาวน์โหลดโมเดลแล้ว"),
+    ("Model deleted", "ลบโมเดลแล้ว"),
+    ("Download failed", "ดาวน์โหลดไม่สำเร็จ"),
+    ("Not downloaded", "ยังไม่ได้ดาวน์โหลด"),
+    ("Verifying model...", "กำลังตรวจสอบโมเดล..."),
+    ("Ready", "พร้อม"),
+    ("int8 (default, about 1 GB)", "int8 (ค่าเริ่มต้น ประมาณ 1 GB)"),
+    ("fp32 (about 2.6 GB)", "fp32 (ประมาณ 2.6 GB)"),
+    ("6 threads", "6 เธรด"),
+    ("OpenThai ASR · Model not installed", "OpenThai ASR · ยังไม่ได้ติดตั้งโมเดล"),
+    ("OpenThai ASR · Downloading model...", "OpenThai ASR · กำลังดาวน์โหลดโมเดล..."),
+    ("Model not installed", "ยังไม่ได้ติดตั้งโมเดล"),
+    ("Downloading model...", "กำลังดาวน์โหลดโมเดล..."),
+    ("Partial transcription and the chunk window apply to live transcription, which comes later.", "ถอดเสียงบางส่วนและช่วงเวลาสตรีมใช้กับการถอดเสียงสด ซึ่งจะมาในภายหลัง"),
+    ("Transcript", "ข้อความถอดเสียง"),
+    ("The transcript appears after you stop recording", "ข้อความถอดเสียงจะปรากฏหลังคุณหยุดบันทึก"),
+    ("No speech found", "ไม่พบเสียงพูด"),
+    ("Transcribing...", "กำลังถอดเสียง..."),
+    ("Transcribing", "กำลังถอดเสียง"),
+    ("Waiting for the model", "รอโมเดล"),
+    ("Waiting for the model. The recording is saved; transcribe it after the model is downloaded.", "รอโมเดล บันทึกเสียงถูกเก็บไว้แล้ว ถอดเสียงได้หลังดาวน์โหลดโมเดล"),
+    ("Transcription failed", "ถอดเสียงไม่สำเร็จ"),
+    ("Transcription cancelled", "ยกเลิกการถอดเสียงแล้ว"),
+    ("Open Transcription settings", "เปิดการตั้งค่าถอดเสียง"),
+    ("You", "คุณ"),
+    ("Others", "คนอื่น"),
+    ("lines", "บรรทัด"),
+    ("Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.", "สัญญาอนุญาตของไลบรารีและโมเดลเสียง: ไฟล์ THIRD_PARTY_NOTICES.md ในโฟลเดอร์โปรเจกต์"),
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcription_texts_have_thai() {
+        for key in [
+            "Missing",
+            "Downloading",
+            "Download model",
+            "Delete model",
+            "Model folder",
+            "Precision",
+            "Open folder",
+            "Model is not installed",
+            "Model downloaded",
+            "Model deleted",
+            "Download failed",
+            "Not downloaded",
+            "Verifying model...",
+            "Ready",
+            "int8 (default, about 1 GB)",
+            "fp32 (about 2.6 GB)",
+            "Model",
+            "Model weights. fp32 is larger and slower; int8 is the default.",
+            "Downloaded once, then kept on this computer.",
+            "6 threads",
+            "OpenThai ASR · Model not installed",
+            "OpenThai ASR · Downloading model...",
+            "Model not installed",
+            "Downloading model...",
+            "Partial transcription and the chunk window apply to live transcription, which comes later.",
+        ] {
+            assert!(has_thai(key), "missing Thai for {key:?}");
+        }
+    }
+
+    #[test]
+    fn recorder_transcription_texts_have_thai() {
+        for key in [
+            "Transcript",
+            "The transcript appears after you stop recording",
+            "No speech found",
+            "Transcribing...",
+            "Transcribing",
+            "Waiting for the model",
+            "Waiting for the model. The recording is saved; transcribe it after the model is downloaded.",
+            "Transcription failed",
+            "Transcription cancelled",
+            "Open Transcription settings",
+            "You",
+            "Others",
+            "lines",
+            "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
+        ] {
+            assert!(has_thai(key), "missing Thai for {key:?}");
+        }
+    }
 
     /// One test only: the language is process-global, so parallel tests would race.
     #[test]

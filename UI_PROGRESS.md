@@ -85,3 +85,11 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Engine: mock `Loading` (1.5 s) to `Ready`, or forced `Error`; shown as a badge on the Recorder, a notice when unavailable, and a pill in Settings > Transcription.
 - Sizes: checked at 1200x760, 1280x800, maximised, English and Thai. Fixed: timer overlapping the sample-rate label (compact 28px timer when narrow), clipped Thai "Pause" label (now "พัก").
 - Not verified: arrow-key navigation inside tables and dropdown popups.
+
+## Transcription on the Recorder and in Settings (2026-11-24)
+
+- Recorder panel with real data (only in a run that has the audio worker; preview runs keep the mock transcript): "Transcript" header with the engine pill, search, auto-scroll, copy; Transcribe button on a saved recording; Waiting banner (model missing) with "Open Transcription settings"; "Transcribing..." with progress and Cancel; lines with time stamp and a You / Others chip; "N lines" footer; failure banner.
+- Settings > Transcription: ASR engine pill from the real model state, model folder row with Open folder, Precision (int8 / fp32), Model row with Download / Cancel / Delete, progress bar with MB, status text, CPU threads (4, 6, 8). Precision and threads are saved.
+- Dev flag `--engine=missing|downloading` joins `loading|ready|error`.
+- Checked with screenshots of the real exe (English): empty, Waiting, downloading (838 MB / 946 MB), ready, Transcribing, done with lines, recording a second session while the first transcribes. Not screenshotted: the Thai running state.
+- Known: the "Recording saved to" toast covers the footer Cancel button for a few seconds.

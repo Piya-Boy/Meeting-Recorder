@@ -10,8 +10,17 @@ _None._
   - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; with Zoom and Teams both open and idle the right one is picked (known risk: lowest PID wins).
   - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last 5 s flush; `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
   - Verification: record the call, then inspect both WAVs; record the result per item here.
-- [ ] Task: Wire the UI to the remaining real backends (OpenThai ASR / ONNX, SQLite)
-  - Acceptance Criteria: live transcript from ASR; recordings and transcripts read from SQLite instead of mock data.
+- [ ] Task: Transcription acceptance items that were not run, or only partly (open items of the transcription work)
+  - Not run: a 2-minute Thai speech recorded through the app with a clean capture (the whole-system loopback picks up everything the PC plays, so the clip-through-speakers runs could not prove accuracy); needs a person speaking, or all other audio muted. Expected: CER near the 4.7-5.3% measured on clips.
+  - Partly run: resume of an interrupted model download. The app was killed 7 s in; the `.part` file already held the full 883175424 bytes and the next start finished (hash, unzip, `ready.ok`) without a new error. A kill in the middle of the file was not reached (kills at 4 s and 5 s left a 0-byte `.part`), so Range resume from a part-way file is covered by the unit tests only.
+  - Partly run: searching `ทำ` finds a line whose text has U+0E4D U+0E32. Covered by unit tests (normalisation and the filter); not driven through the search box of the real window.
+  - Known rough edges: the "Recording saved to" toast covers the footer Cancel button for a few seconds; a failed model delete shows "Download failed: ..."; the "Waiting for the model" text and its "Open Transcription settings" button sit slightly apart vertically; the Thai running-state screenshot was not taken; a microphone quieter than -50 dBFS rms is treated as silence; the below-normal priority applies to the worker thread, not to ONNX Runtime's own threads.
+  - Verification: do each item and record the result here.
+- [ ] Task: Live transcript during recording (the transcript is made after Stop only)
+  - Acceptance Criteria: partial and final lines appear while recording; Settings "Partial transcription" and "Streaming chunk window" take effect (today they are shown but do nothing).
+  - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
+- [ ] Task: Wire Recordings and Transcripts to real data (SQLite index, saved files)
+  - Acceptance Criteria: recordings and transcripts read from disk / SQLite instead of mock data.
   - Verification: Record a short session, reopen the app, find it in Recordings and Transcripts; `cargo test` covers the storage layer.
 - [ ] Task: Keyboard navigation inside tables and dropdown popups
   - Acceptance Criteria: Arrow keys / Enter work in rows and popups; focus ring visible.
@@ -73,6 +82,23 @@ _None._
     - PASS the UI did not stall in any of the 5 recording runs (observed, not measured).
   - Not verified: capturing a real Zoom/Teams call, participant separation between tracks, quit/reopen of the meeting app, microphone unplug, process-loopback timestamps from a live process. These are the open task above; the roadmap item stays unticked.
   - Commit: branch `feature/audio-capture`, not pushed, no PR.
+
+- [x] Task: Offline Thai transcription of every saved recording (branch `feature/asr-transcription`; spec `docs/superpowers/specs/2026-11-24-asr-transcription-design.md`, plan `docs/superpowers/plans/2026-11-24-asr-transcription.md`)
+  - Built: ONNX Runtime recognizer (OpenThai 2.0 ASR Streaming, ported parts of PoodPim, MIT) behind a worker thread with a queue, cancel and idle unload; model download on first use (pinned revision, SHA-256, resume, zip extract, `ready.ok`); resampling to 16 kHz; pause-based segmentation; Thai text normalisation; merge of the two tracks into `transcript.json` and `transcript.txt` (written atomically, mic = "You", system = "Others"); Settings > Transcription with a real model state, Download / Cancel / Delete, precision and thread count (saved); Recorder shows the transcript, progress, Cancel, "N lines", the "Waiting for the model" notice and failures.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 246 passed, 6 ignored (the ignored ones need the model, audio hardware or clips).
+  - Acceptance checks run on this machine (Intel Core Ultra 5 228V, Windows 11 build 26300), real exe, mouse clicks:
+    - PASS accuracy on 10 FLEURS Thai clips, int8, 4 threads, 16 kHz input: CER 5.27% (bar 6%); the same clips converted to 48 kHz and resampled by the app: CER 4.84%, RTF 0.136, peak RAM about 1202 MiB (debug build). The Python spike on the same clips gave 4.8%.
+    - PASS 10-minute file (the clips repeated 7 times, 690.5 s) in a release build: CER 4.73%, 33.1 s to transcribe (RTF 0.048), peak RAM 1413 MiB, model load 2.2 s.
+    - PASS no model installed: Stop saves both WAVs, no transcript, and the Recorder says "Waiting for the model" with an "Open Transcription settings" button.
+    - PASS model download from the Settings button: 946 MiB, about 40 s, files match the manifest sizes (`decoder_joint.onnx` 107330778, `encoder.int8.onnx` 1589571, `encoder.int8.onnx.data` 883175424, `tokens.txt` 93160, `LICENSE` 2619), `ready.ok` written, pill changes to "OpenThai ASR" and the button to "Delete model".
+    - PASS killing the app 1.2 s after Stop (transcription running): folder holds only `mic.wav` and `system.wav`; no `transcript.json` or `transcript.txt`.
+    - PASS recording a second session while the first is transcribed: both finish; WAV frame counts (Python `wave`) were mic = system in each folder (1544351 and 308442 frames at 48 kHz).
+    - PASS transcript on screen equals `transcript.txt` (line counts and text compared in two runs).
+    - PARTIAL download resume, search: see the open task above.
+    - NOT RUN 2-minute speech with a clean capture: see the open task above.
+  - Not verified: speaker labels on a real call (mic = "You", system = "Others" came from the clip runs, where the clips played through the speakers and the whole-system loopback also caught other PC audio).
+  - Open gate for any release: licence compatibility of the model (OpenMDW-1.1) with this project's licence, and the "Powered by OpenThai ASR" badge (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
+  - Commit: branch `feature/asr-transcription`, not pushed, no PR.
 
 ## Rules
 

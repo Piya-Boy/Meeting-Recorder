@@ -117,3 +117,75 @@ _Add decisions below._
 - Alternatives: Share a sample buffer with the UI (locking, copies).
 - Consequences: Meters cost one small event per 50 ms; the UI has no audio dependency, so it can run with a fake backend in tests.
 - References: `src/audio/session.rs`, `src/app.rs`
+
+### 2026-11-24 - ONNX Runtime through the `ort` crate
+
+- Status: Accepted
+- Context: OpenThai 2.0 ASR Streaming ships as ONNX files; the app is native Rust and has no Python.
+- Decision: `ort` 2.0.0-rc.15 with `default-features = false` and features `std`, `tls-native`, `api-31`, `download-binaries`. The build script downloads the prebuilt ONNX Runtime and links it into the exe (no separate DLL sits next to the debug exe). One shared `Environment` per process; one session for the encoder, one for the decoder/joiner. Session builder steps are mapped one by one so clippy's `result_large_err` stays quiet.
+- Alternatives: `onnxruntime-sys` directly (more code, no safe wrapper); calling a Python sidecar (rejected: extra runtime to install); `tract` (no support for the model's operators was checked).
+- Consequences: A release build needs network access once, to fetch the runtime. `ort` is a release candidate, so a version bump may change the API. The encoder takes 1.1 GB of RAM (int8, measured), so the worker frees it after 5 minutes without a job.
+- References: `Cargo.toml`, `src/asr/engine.rs`
+
+### 2026-11-24 - Model delivery: pinned revision, hashes, download on first use
+
+- Status: Accepted
+- Context: The model is about 1 GB (int8) or 2.6 GB (fp32); it cannot sit in the repository or the installer, and a download must not be able to put a wrong or half-written file in use.
+- Decision: The app downloads from `https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming-ONNX/resolve/<revision>/` with the revision pinned to `9f142a43e4d35a422c1c7dac40772ef707387ebc`. `asr::model::manifest` lists every file with its size and SHA-256; a file is used only after its hash matches. Download goes to `<name>.part`, resumes with a Range request, retries up to 6 times, treats 45 s without data as a stall, and can be cancelled. The zip (encoder graph, `decoder_joint.onnx`, `tokens.txt`) is extracted through a four-name whitelist. `ready.ok` holds `size=<bytes of the weights file>`; `status` trusts it instead of hashing 1 GB at every start. Folder: `%LOCALAPPDATA%\MeetingRecorder\models\9f142a4\<int8|fp32>`. HTTP: `ureq` 3 with `native-tls` (Windows' own TLS stack, no extra certificate bundle); `zip` 9 and `sha2` 0.11.
+- Alternatives: Bundle the model (too big, and the licence question below); fetch the latest revision (a silent model change would change results); hash on every start (seconds of disk I/O).
+- Consequences: First use needs about 1 GB of download. A model folder edited by hand (same size file) is trusted. A new model revision means a new manifest and a new folder. Measured here: 946 MiB downloaded and verified in about 40 s (debug build, where the hash check is slow).
+- References: `src/asr/model.rs`, `src/asr/download.rs`
+
+### 2026-11-24 - Transcription code ported from PoodPim (MIT)
+
+- Status: Accepted
+- Context: Log-mel features, the silence segmenter, greedy RNN-T decoding, resumable download and the resampling kernel already exist in PoodPim and were checked against the same model.
+- Decision: Port them into `src/asr/` with a header in each ported file naming the source and commit (`15e07cc835a6b16b95bea65ae31c3a2eb4c6e856`), and keep PoodPim's MIT text in `THIRD_PARTY_NOTICES.md`.
+- Alternatives: Write them from the model card (slower, no reference to compare with); depend on PoodPim as a crate (it is an application).
+- Consequences: The ported code keeps PoodPim's structure. MIT is compatible with the project's licence; the notice must stay with any distribution.
+- References: `THIRD_PARTY_NOTICES.md`, `src/asr/features.rs`, `src/asr/segment.rs`, `src/asr/engine.rs`
+
+### 2026-11-24 - Segmentation and decoding values
+
+- Status: Accepted
+- Context: The model reads at most 30 s per call and is trained on speech, not on silence; meetings have long quiet parts.
+- Decision: Audio is converted to 16 kHz mono first. The segmenter uses PoodPim's cut rules on a fixed 30 s window of pending audio (so cuts do not depend on how the audio arrives): a pause of at least 0.5 s cuts once the segment is 8 s long; a pause of at least 1.2 s cuts once it is 2 s long; with no pause by 25 s it cuts at the quietest 0.2 s of the last 6 s. A frame is quiet below -50 dBFS (20 ms frames); each segment is trimmed to its sound with 0.25 s padding; segments shorter than 0.3 s are dropped. Decoding is greedy with at most 10 symbols per frame; the blank is biased by -1.0 (-2.5 under 2 s of audio); a pause between tokens becomes a space; the sara am is normalised (U+0E4D U+0E32 becomes U+0E33). A track at or below the quiet threshold the whole time gives no lines and never reaches the model.
+- Alternatives: Fixed 30 s chunks (cuts words); a neural voice detector (another model to ship).
+- Consequences: A very quiet microphone (below -50 dBFS) is treated as silence. Measured on 10 FLEURS Thai clips with int8, 4 threads: CER 5.27% (bar 6%); the same clips converted to 48 kHz and resampled by the app: 4.84%.
+- References: `src/asr/segment.rs`, `src/asr/engine.rs`, `src/asr/thai.rs`, `src/asr/accuracy.rs`
+
+### 2026-11-24 - Track labels: microphone is "You", system audio is "Others"
+
+- Status: Accepted
+- Context: There is no speaker separation model; the two tracks are the only speaker information.
+- Decision: Lines from `mic.wav` are "You", lines from `system.wav` are "Others"; both tracks are transcribed alone and merged by start time (microphone first on ties). `transcript.txt` uses the names of the UI language at start-up; `transcript.json` stores `"track": "mic" | "system"`.
+- Alternatives: Speaker diarization (not available in this release); a mixed mono track (loses who spoke).
+- Consequences: Several people in the room share "You"; several remote people share "Others". A person whose voice comes out of the speakers and is picked up by the microphone appears on both tracks (no echo handling).
+- References: `src/asr/transcript.rs`, `src/asr/worker.rs`
+
+### 2026-11-24 - Recorder footer shows a line count, not a word count
+
+- Status: Accepted
+- Context: The mock footer said "142 Thai words". Thai has no spaces between words; the model's spaces mark pauses, so counting them says nothing about words.
+- Decision: The footer shows the number of lines ("N lines"); no word count.
+- Alternatives: Word segmentation with a dictionary (another dependency and model).
+- Consequences: Less information in the footer; nothing misleading.
+- References: `src/screens/recorder.rs`
+
+### 2026-11-24 - Transcription worker: one job at a time, nothing half-written
+
+- Status: Accepted
+- Context: Transcription takes seconds to minutes and must neither freeze the window nor disturb a recording.
+- Decision: One worker thread at below-normal priority, commands and events over channels (as for audio). Jobs run in order, one per folder; Stop on a recording sends a job at once (or notes that the model is missing). Cancel and close stop between two segments. `transcript.json` and `transcript.txt` are written once at the end, each through a temporary file and a rename, so a cancelled, failed or killed job leaves neither; the WAV files are never written. The loaded model is dropped after 5 minutes without a job and before the model files are deleted. Threads: 4, 6 or 8 (default 4).
+- Alternatives: Writing the transcript while it grows (a crash leaves a partial file); one thread per job (several 1 GB models in memory).
+- Consequences: A cancel sent before its job starts is ignored; only the running job can be cancelled. ONNX Runtime's own threads keep normal priority (see `TASKS.md`).
+- References: `src/asr/worker.rs`
+
+### 2026-11-24 - Open licence gate: model licence and the "Powered by OpenThai ASR" badge
+
+- Status: Proposed (unresolved, blocks any release that bundles or ships the model)
+- Context: The model is under OpenMDW-1.1 (text in `THIRD_PARTY_NOTICES.md`); the project has its own licence (`LICENSE`). The UI shows a "Powered by OpenThai ASR"-style badge.
+- Decision: None yet. The app only downloads the model onto the user's own computer from the publisher's repository and does not redistribute it. Nobody has checked (1) that OpenMDW-1.1 and the project's licence work together for a release, or (2) whether the model's publisher sets rules for the badge.
+- Alternatives: Ask the publisher; take legal advice; drop the badge.
+- Consequences: Do not publish an installer that includes the model, or ship the badge as final, before this is settled.
+- References: `THIRD_PARTY_NOTICES.md`, `LICENSE`

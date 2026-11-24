@@ -1,4 +1,5 @@
 mod app;
+mod asr;
 mod audio;
 mod branding;
 mod components;
@@ -48,6 +49,19 @@ fn main() -> eframe::Result<()> {
                 state.enable_audio(audio::worker::AudioHandle::spawn(
                     std::sync::Arc::new(audio::wasapi_backend::WasapiBackend::new()),
                     audio::worker::WorkerConfig::default(),
+                ));
+            }
+            // Same condition as the capture worker: dev flags keep the preview, `--audio`
+            // turns the real workers on.
+            if !dev_flags || args.iter().any(|a| a == "--audio") {
+                // transcript.txt names the speakers in the language the app starts in.
+                i18n::set_lang(i18n::lang_from_index(state.settings_general.language_idx));
+                state.enable_asr(asr::worker::AsrHandle::spawn(
+                    std::sync::Arc::new(asr::worker::OrtFactory),
+                    asr::worker::AsrConfig {
+                        labels: (i18n::tr("You").to_owned(), i18n::tr("Others").to_owned()),
+                        ..Default::default()
+                    },
                 ));
             }
             Ok(Box::new(state))
