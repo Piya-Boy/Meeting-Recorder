@@ -3,7 +3,7 @@
 ## Current Milestone
 
 - Goal: Native egui UI for every Stitch screen, then connect real backends.
-- Status: M2 UI half Done; backend half Not Started
+- Status: M2 UI half Done; audio capture built but real-call acceptance still open; ASR, SQLite, exports Not Started
 - Exit Criteria: UI matches the design; `cargo fmt --check`, `cargo check`, `cargo clippy`, `cargo test` pass; backends wired and verified.
 
 ## Milestones
@@ -17,7 +17,7 @@
 - [x] UI: 10 screens, 3 modals, toasts, navigation, resizable frameless window
 - [x] UI: dark and light themes, accent colours, font scaling, English / Thai language
 - [x] UI: app logo, exe icon, shortcuts, keyboard focus, engine states
-- [ ] Audio capture (Windows WASAPI, dual track)
+- [ ] Audio capture (Windows WASAPI, dual track): built and checked on this machine, real Zoom/Teams acceptance open (see TASKS.md)
 - [ ] Transcription (OpenThai ASR on ONNX Runtime)
 - [ ] Storage (SQLite index, WAV / transcript files)
 - [ ] Exports (TXT, SRT, JSON)

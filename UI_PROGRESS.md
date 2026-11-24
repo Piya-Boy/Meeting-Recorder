@@ -8,7 +8,7 @@ Stack: Rust + egui/eframe 0.31 (native, no WebView). UI only — no audio/ASR ba
 - Current Target: none — Definition of Done met (see "Known limitations")
 
 ## Screen Checklist
-- [x] 1. Recorder — Split View (idle / recording / paused / processing / error states)
+- [x] 1. Recorder — Split View (idle / starting / recording / paused / processing / saved / error states)
 - [x] 2. Recordings — Recording Library (search, date filter, sort, inline player, delete, empty state)
 - [x] 3. Transcripts — Transcript Management (search, open, copy, TXT/SRT/JSON)
 - [x] 4. Transcript Detail — Document Viewer (breadcrumb, copy all, export, editable paragraphs)
@@ -60,7 +60,7 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Icons: Phosphor (egui-phosphor) substitutes Lucide.
 - Buttons that need a backend (hardware test, folder picker, optimize DB, export diagnostics, …) show a "not wired up yet (UI preview)" toast.
 - Frameless: Windows 11 snap-layout flyout on the maximise button is not available (custom button); drag-to-edge snapping and Win+Arrows still work. Window is resizable (min 1200×760); layouts use flexible columns, but only 1280×800 was screenshot-verified.
-- Mock data everywhere: no audio, ASR or SQLite backend exists.
+- Mock data: ASR, SQLite and exports do not exist yet. Audio capture is real (see `TASKS.md`); the Recorder uses it when started normally or with `--audio`, and keeps the old mock behavior for other dev-flag runs.
 - Nothing is committed: repo has no commits or remote and the user has not asked for one.
 
 ## Language switching (English / Thai)
