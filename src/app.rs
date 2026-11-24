@@ -1,6 +1,6 @@
 use crate::asr::model::{ModelStatus, Precision};
 use crate::asr::worker::{AsrHandle, Command as AsrCommand, EngineEvent, Event as AsrEvent};
-use crate::audio::session::{Command, Event};
+use crate::audio::session::{Command, Event, SessionState};
 use crate::audio::worker::AudioHandle;
 use crate::i18n::tr;
 use egui::Ui;
@@ -149,6 +149,8 @@ pub struct AppState {
     last_screen: Screen,
     /// A delete was sent and its answer has not come yet.
     asr_deleting: bool,
+    /// The recording whose live transcription is on, if any.
+    live_dir: Option<std::path::PathBuf>,
     /// The recording being played, if any (the playback thread lives inside).
     player: Option<crate::playback::PlayerHandle>,
     /// Starts a player on a folder; tests replace it with one that uses a fake device.
@@ -186,6 +188,7 @@ impl Default for AppState {
             library_live: false,
             last_screen: Screen::default(),
             asr_deleting: false,
+            live_dir: None,
             player: None,
             player_start: crate::playback::PlayerHandle::start,
             persist: false,
@@ -365,6 +368,17 @@ impl AppState {
             AsrEvent::Error {
                 dir: Some(dir),
                 message,
+            } if self.live_dir.as_deref() == Some(dir.as_path()) => {
+                // A live run failed: the recording goes on and the final transcript is a job of
+                // its own, so the panel does not show a failure.
+                let _ = message;
+                self.live_dir = None;
+                self.recorder.live_stopped();
+                self.asr_notice = Some("Live transcript stopped.".to_owned());
+            }
+            AsrEvent::Error {
+                dir: Some(dir),
+                message,
             } => {
                 self.recorder.asr_failed(&dir, message);
                 self.refresh_library();
@@ -372,9 +386,44 @@ impl AppState {
             AsrEvent::Error { dir: None, message } => self.asr_notice = Some(message),
             // The job waits behind another; the panel keeps showing the running one.
             AsrEvent::Queued { .. } => {}
-            // Shown on the Recorder panel once the app starts live runs (next task).
-            AsrEvent::LiveLine { .. } | AsrEvent::LiveEnded { .. } => {}
+            AsrEvent::LiveLine { dir, line } => self.recorder.live_line(&dir, &line),
+            AsrEvent::LiveEnded { dir } => {
+                if self.live_dir.as_deref() == Some(dir.as_path()) {
+                    self.live_dir = None;
+                }
+                self.recorder.live_ended(&dir);
+            }
         }
+    }
+
+    /// Starts the live transcript of a recording that just began, if the setting is on, the
+    /// model is installed and no job is on the panel. Does nothing in preview mode.
+    fn start_live(&mut self, dir: std::path::PathBuf) {
+        let Some(asr) = &self.asr else { return };
+        let t = &self.settings_transcription;
+        if !t.partial_transcription || t.model_status != ModelStatus::Ready {
+            return;
+        }
+        if !self.recorder.live_started(dir.clone()) {
+            return;
+        }
+        asr.send(AsrCommand::LiveStart {
+            dir: dir.clone(),
+            precision: t.precision,
+            threads: t.threads(),
+            poll_ms: crate::screens::settings::transcription::chunk_window_ms(t.chunk_window_idx),
+        });
+        self.live_dir = Some(dir);
+    }
+
+    /// Ends the live transcript (its lines stay on the panel until the final transcript).
+    fn stop_live(&mut self) {
+        if self.live_dir.take().is_some() {
+            if let Some(asr) = &self.asr {
+                asr.send(AsrCommand::LiveStop);
+            }
+        }
+        self.recorder.live_stopped();
     }
 
     /// Sends a saved recording to the worker, or notes that it has to wait for the model.
@@ -751,11 +800,19 @@ impl AppState {
     pub fn apply_audio_event(&mut self, event: Event) {
         match event {
             Event::Devices { system, mic } => self.audio_choice.apply_devices(system, mic),
+            Event::SessionStarted { dir } => self.start_live(dir),
+            Event::State(state) => {
+                self.recorder.apply_event(Event::State(state));
+                if matches!(state, SessionState::Idle | SessionState::Error) {
+                    self.stop_live();
+                }
+            }
             Event::Saved { dir, duration } => {
                 self.recorder.apply_event(Event::Saved {
                     dir: dir.clone(),
                     duration,
                 });
+                self.stop_live(); // before the final job, which waits for a live run to end
                 self.start_transcription(dir);
                 self.refresh_library();
             }
@@ -2014,5 +2071,152 @@ mod tests {
         a.sync_player(&ctx);
         assert!(a.player.is_none() && a.recordings.player.is_none());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ─── live transcript ─────────────────────────────────────────────────────────────────────
+
+    /// A recording folder as it is mid-recording: 3 s of speech, 1.5 s of quiet, header not final.
+    fn growing_session(base: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let speech: Vec<i16> = (0..48_000)
+            .map(|i| (0.3 * 32_767.0 * (i as f32 * 0.07).sin()) as i16)
+            .collect();
+        for f in ["mic.wav", "system.wav"] {
+            let file = std::fs::File::create(dir.join(f)).unwrap();
+            let mut w = crate::audio::wav::WavWriter::new(file, 16_000).unwrap();
+            w.write_samples(&speech).unwrap();
+            w.write_samples(&vec![0i16; 24_000]).unwrap();
+            w.flush_header().unwrap();
+        }
+        dir
+    }
+
+    fn started(dir: &std::path::Path) -> Event {
+        Event::SessionStarted {
+            dir: dir.to_path_buf(),
+        }
+    }
+
+    fn ready_app(base: &std::path::Path) -> AppState {
+        use crate::asr::model::{ModelStatus, Precision};
+        install(base, Precision::Int8);
+        let mut a = AppState::default();
+        a.enable_asr(says_handle(base));
+        wait_for(&mut a, ModelStatus::Ready);
+        a
+    }
+
+    #[test]
+    fn live_runs_while_recording_and_the_final_transcript_replaces_its_lines() {
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-live");
+        let dir = growing_session(&base, "rec1");
+        let mut a = ready_app(&base);
+
+        a.apply_audio_event(started(&dir));
+        assert_eq!(a.live_dir.as_deref(), Some(dir.as_path()));
+        assert!(a.recorder.live_on);
+        wait_until(&mut a, "live lines", |a| {
+            a.recorder.transcript_segments.len() >= 2
+        });
+        assert!(a
+            .recorder
+            .transcript_segments
+            .iter()
+            .all(|s| s.text == "hi"));
+        assert!(!dir.join("transcript.json").exists(), "live writes nothing");
+
+        a.apply_audio_event(saved(&dir));
+        assert!(a.live_dir.is_none() && !a.recorder.live_on);
+        wait_until(&mut a, "final job", |a| a.recorder.asr_job == AsrJob::Done);
+        assert!(dir.join("transcript.json").is_file());
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn live_does_not_start_with_the_setting_off_or_without_the_model() {
+        use crate::asr::model::ModelStatus;
+        let base = crate::audio::temp_dir("app-live-off");
+        let dir = growing_session(&base, "rec1");
+
+        let mut a = ready_app(&base);
+        a.settings_transcription.partial_transcription = false;
+        a.apply_audio_event(started(&dir));
+        assert!(a.live_dir.is_none() && !a.recorder.live_on);
+
+        let mut b = AppState::default();
+        b.enable_asr(says_handle(&crate::audio::temp_dir("app-live-nomodel")));
+        wait_for(&mut b, ModelStatus::Missing);
+        b.apply_audio_event(started(&dir));
+        assert!(b.live_dir.is_none() && !b.recorder.live_on);
+
+        let mut preview = AppState::default(); // no worker at all
+        preview.apply_audio_event(started(&dir));
+        assert!(preview.live_dir.is_none());
+        drop((a, b));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_session_that_ends_without_saving_stops_live() {
+        let base = crate::audio::temp_dir("app-live-end");
+        let dir = growing_session(&base, "rec1");
+        let mut a = ready_app(&base);
+        a.apply_audio_event(started(&dir));
+        assert!(a.live_dir.is_some());
+        a.apply_audio_event(Event::State(SessionState::Error));
+        assert!(a.live_dir.is_none() && !a.recorder.live_on);
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    struct Fails;
+    struct FailsRecognizer;
+    impl crate::asr::engine::Recognizer for FailsRecognizer {
+        fn recognize(&mut self, _samples: &[f32]) -> Result<String, String> {
+            Err("boom".to_owned())
+        }
+    }
+    impl crate::asr::worker::RecognizerFactory for Fails {
+        fn load(
+            &self,
+            _dir: &std::path::Path,
+            _threads: usize,
+        ) -> Result<Box<dyn crate::asr::engine::Recognizer>, String> {
+            Ok(Box::new(FailsRecognizer))
+        }
+    }
+
+    #[test]
+    fn a_live_error_stops_the_run_with_a_notice_and_does_not_fail_the_panel() {
+        use crate::asr::model::{ModelStatus, Precision};
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-live-fail");
+        install(&base, Precision::Int8);
+        let dir = growing_session(&base, "rec1");
+        let mut a = AppState::default();
+        a.enable_asr(crate::asr::worker::AsrHandle::spawn(
+            std::sync::Arc::new(Fails),
+            crate::asr::worker::AsrConfig {
+                models_base: Some(base.clone()),
+                ..Default::default()
+            },
+        ));
+        wait_for(&mut a, ModelStatus::Ready);
+        a.apply_audio_event(started(&dir));
+        wait_until(&mut a, "live error", |a| a.live_dir.is_none());
+        assert_eq!(
+            a.take_asr_notice().as_deref(),
+            Some("Live transcript stopped.")
+        );
+        assert!(
+            !matches!(a.recorder.asr_job, AsrJob::Failed(_)),
+            "the final job is what can fail"
+        );
+        assert!(!a.recorder.live_on);
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
     }
 }

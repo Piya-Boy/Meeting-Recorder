@@ -70,6 +70,16 @@ impl SettingsTranscriptionScreen {
 }
 
 /// Index of `threads` in the select (an unlisted count gives the default, 4).
+/// How often, in milliseconds, new audio is read for the live lines (the "Streaming chunk
+/// window" select: 500, 1,000 or 2,000 ms).
+pub fn chunk_window_ms(index: usize) -> u64 {
+    match index {
+        0 => 500,
+        2 => 2_000,
+        _ => 1_000,
+    }
+}
+
 pub fn threads_index(threads: u32) -> usize {
     THREAD_COUNTS
         .iter()
@@ -354,7 +364,7 @@ pub fn draw_settings_transcription(
                     ui,
                     theme,
                     "Partial transcription",
-                    Some("Display interim Thai text while speech is still being processed."),
+                    Some("Show transcript lines while recording. Each line appears after a pause."),
                     40.0,
                     |ui| {
                         toggle_switch(ui, theme, &mut screen.partial_transcription);
@@ -364,7 +374,7 @@ pub fn draw_settings_transcription(
                     ui,
                     theme,
                     "Streaming chunk window",
-                    Some("Audio buffer interval before running incremental ASR decoding."),
+                    Some("How often new audio is read for the live lines."),
                     180.0,
                     |ui| {
                         select(
@@ -380,7 +390,7 @@ pub fn draw_settings_transcription(
                 );
                 ui.label(
                     RichText::new(tr(
-                        "Partial transcription and the chunk window apply to live transcription, which comes later.",
+                        "Live lines are a preview. The final transcript is made after you stop and may differ a little.",
                     ))
                     .size(12.0)
                     .color(theme.on_surface_variant),
@@ -450,5 +460,17 @@ mod tests {
         assert_eq!(progress_fraction(50, 100), 0.5);
         assert_eq!(progress_fraction(200, 100), 1.0);
         assert_eq!(megabytes(883_000_000), "842 MB");
+    }
+
+    #[test]
+    fn the_chunk_window_index_maps_to_milliseconds() {
+        assert_eq!(chunk_window_ms(0), 500);
+        assert_eq!(chunk_window_ms(1), 1_000);
+        assert_eq!(chunk_window_ms(2), 2_000);
+        assert_eq!(
+            chunk_window_ms(9),
+            1_000,
+            "an unknown index falls back to the default"
+        );
     }
 }

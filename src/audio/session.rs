@@ -102,6 +102,11 @@ pub enum Event {
         status: SourceStatus,
     },
     Elapsed(Duration),
+    /// A session began: its folder exists and both track files (the sources that are on) are
+    /// created, so something can follow them while they are written.
+    SessionStarted {
+        dir: PathBuf,
+    },
     Saved {
         dir: PathBuf,
         duration: Duration,

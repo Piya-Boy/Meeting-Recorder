@@ -55,7 +55,6 @@ pub enum Command {
     },
     /// Follows the files of a recording that is still being written and reports lines as they
     /// are recognized, reading new audio every `poll_ms`. Queued like a job; ends at `LiveStop`.
-    #[allow(dead_code)] // sent by the app in a later task
     LiveStart {
         dir: PathBuf,
         precision: Precision,
@@ -63,7 +62,6 @@ pub enum Command {
         poll_ms: u64,
     },
     /// Ends the live run (or removes it from the queue). Does not touch the files.
-    #[allow(dead_code)] // sent by the app in a later task
     LiveStop,
 }
 
@@ -91,13 +89,11 @@ pub enum Event {
         dir: PathBuf,
     },
     /// A line recognized during a live run.
-    #[allow(dead_code)] // shown by the app in a later task
     LiveLine {
         dir: PathBuf,
         line: Line,
     },
     /// The live run for `dir` is over (stopped, failed, or never started: no model).
-    #[allow(dead_code)] // read by the app in a later task
     LiveEnded {
         dir: PathBuf,
     },

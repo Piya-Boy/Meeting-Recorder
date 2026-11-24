@@ -6,7 +6,7 @@ use crate::components::button::{block_button, custom_button, ButtonVariant};
 use crate::components::toggle::toggle_switch;
 use crate::theme::ThemeColors;
 
-use crate::asr::transcript::{format_clock, Track, Transcript};
+use crate::asr::transcript::{format_clock, Line, Track, Transcript};
 use crate::audio::session::{Command, Event, SessionState, Source, SourceStatus, StartRequest};
 use crate::audio::worker::AudioHandle;
 use crate::screens::settings::audio::{device_dropdown, AudioChoice};
@@ -148,6 +148,12 @@ pub struct RecorderScreen {
     capture_mic: Option<String>,
     pub transcript_segments: Vec<TranscriptSegment>,
     pub partial_text: String,
+    /// A live transcription run is on for the recording in progress.
+    pub live_on: bool,
+    /// The folder whose live lines the panel shows, and the start time of each of them (to put
+    /// a late line in its place).
+    live_for: Option<PathBuf>,
+    live_starts: Vec<u64>,
     /// False in preview mode, where the panel shows the mock transcript.
     pub live: bool,
     pub asr_job: AsrJob,
@@ -277,6 +283,7 @@ impl RecorderScreen {
                 Source::Mic => self.mic_status = Some(status),
             },
             Event::Elapsed(elapsed) => self.elapsed = elapsed,
+            Event::SessionStarted { .. } => {} // the app starts the live transcript
             Event::Saved { dir, duration } => {
                 self.elapsed = duration;
                 let name = dir
@@ -402,7 +409,55 @@ impl RecorderScreen {
         self.transcript_dir = Some(dir.to_path_buf());
         self.transcript_segments.clear();
         self.partial_text.clear();
+        self.live_for = None;
+        self.live_starts.clear();
         true
+    }
+
+    /// A live run starts for the recording in `dir`: the panel is emptied for it. `false` (and
+    /// nothing changes) while a transcription job is on the panel.
+    pub fn live_started(&mut self, dir: PathBuf) -> bool {
+        if self.asr_job.is_running() {
+            return false;
+        }
+        self.go_live();
+        self.transcript_dir = Some(dir.clone());
+        self.transcript_segments.clear();
+        self.partial_text.clear();
+        self.live_starts.clear();
+        self.asr_job = AsrJob::Idle;
+        self.live_for = Some(dir);
+        self.live_on = true;
+        true
+    }
+
+    /// A line recognized while recording; lines of another folder are ignored.
+    pub fn live_line(&mut self, dir: &Path, line: &Line) {
+        if self.live_for.as_deref() != Some(dir) {
+            return;
+        }
+        let at = self.live_starts.partition_point(|&s| s <= line.start_ms);
+        self.live_starts.insert(at, line.start_ms);
+        self.transcript_segments.insert(
+            at,
+            TranscriptSegment {
+                timestamp: format_clock(line.start_ms),
+                text: line.text.clone(),
+                speaker: Some(line.track),
+            },
+        );
+    }
+
+    /// The live run is over (the lines stay until the final transcript replaces them).
+    pub fn live_stopped(&mut self) {
+        self.live_on = false;
+    }
+
+    /// The worker says the live run for `dir` ended.
+    pub fn live_ended(&mut self, dir: &Path) {
+        if self.live_for.as_deref() == Some(dir) {
+            self.live_on = false;
+        }
     }
 
     /// A job for `dir` was sent to the worker.
@@ -414,8 +469,13 @@ impl RecorderScreen {
             return; // queued behind the job on screen
         }
         self.go_live();
-        self.transcript_segments.clear();
+        // The live lines of this recording stay until its transcript replaces them.
+        if self.live_for.as_deref() != Some(dir.as_path()) {
+            self.transcript_segments.clear();
+            self.live_starts.clear();
+        }
         self.partial_text.clear();
+        self.live_on = false;
         self.asr_job = AsrJob::Running {
             done_secs: 0.0,
             total_secs: 0.0,
@@ -473,6 +533,8 @@ impl RecorderScreen {
     pub fn set_transcript(&mut self, t: &Transcript) {
         self.go_live();
         self.partial_text.clear();
+        self.live_for = None;
+        self.live_starts.clear();
         self.transcript_segments = t
             .lines
             .iter()
@@ -486,6 +548,9 @@ impl RecorderScreen {
 
     /// English key of the text shown while the panel has no lines.
     pub fn transcript_empty_state(&self) -> &'static str {
+        if self.live_on && !self.asr_job.is_running() {
+            return "Listening...";
+        }
         match &self.asr_job {
             AsrJob::Running { .. } => "Transcribing...",
             AsrJob::Waiting => "Waiting for the model",
@@ -556,6 +621,9 @@ impl Default for RecorderScreen {
             capture_rate: 48_000,
             capture_system: None,
             capture_mic: None,
+            live_on: false,
+            live_for: None,
+            live_starts: Vec::new(),
             transcript_segments: vec![
                 TranscriptSegment {
                     timestamp: "00:00:12".to_owned(),
@@ -1912,5 +1980,107 @@ mod tests {
         ] {
             assert!(crate::i18n::has_thai(key), "missing Thai for {key:?}");
         }
+    }
+
+    // ─── live lines ──────────────────────────────────────────────────────────────────────────
+
+    fn live(track: Track, start_ms: u64, text: &str) -> Line {
+        Line {
+            track,
+            start_ms,
+            end_ms: start_ms + 1_000,
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn live_lines_are_inserted_in_time_order_with_their_label() {
+        let dir = PathBuf::from("C:\\rec\\a");
+        let mut s = RecorderScreen::default();
+        assert!(s.live_started(dir.clone()));
+        s.live_line(&dir, &live(Track::Mic, 5_000, "b"));
+        s.live_line(&dir, &live(Track::System, 1_000, "a"));
+        s.live_line(&dir, &live(Track::Mic, 9_000, "c"));
+        let texts: Vec<_> = s
+            .transcript_segments
+            .iter()
+            .map(|x| x.text.as_str())
+            .collect();
+        assert_eq!(texts, ["a", "b", "c"]);
+        let who: Vec<_> = s.transcript_segments.iter().map(|x| x.speaker).collect();
+        assert_eq!(
+            who,
+            [Some(Track::System), Some(Track::Mic), Some(Track::Mic)]
+        );
+        assert_eq!(s.transcript_segments[0].timestamp, format_clock(1_000));
+        // A line for another folder is ignored.
+        s.live_line(Path::new("C:\\rec\\other"), &live(Track::Mic, 0, "x"));
+        assert_eq!(s.transcript_segments.len(), 3);
+    }
+
+    #[test]
+    fn a_new_live_run_clears_the_old_lines() {
+        let a = PathBuf::from("C:\\rec\\a");
+        let b = PathBuf::from("C:\\rec\\b");
+        let mut s = RecorderScreen::default();
+        assert!(s.live_started(a.clone()));
+        s.live_line(&a, &live(Track::Mic, 0, "old"));
+        assert!(s.live_started(b.clone()));
+        assert!(s.transcript_segments.is_empty());
+        assert_eq!(s.transcript_dir.as_deref(), Some(b.as_path()));
+        s.live_line(&a, &live(Track::Mic, 0, "late line of the old run"));
+        assert!(
+            s.transcript_segments.is_empty(),
+            "the old folder is not shown any more"
+        );
+    }
+
+    #[test]
+    fn live_does_not_take_the_panel_from_a_running_job() {
+        let old = PathBuf::from("C:\\rec\\old");
+        let new = PathBuf::from("C:\\rec\\new");
+        let mut s = RecorderScreen::default();
+        s.asr_started(old.clone());
+        assert!(!s.live_started(new.clone()), "a job is running");
+        assert_eq!(s.transcript_dir.as_deref(), Some(old.as_path()));
+        assert!(!s.live_on);
+    }
+
+    #[test]
+    fn listening_shows_until_the_run_ends_and_the_final_transcript_replaces_live_lines() {
+        let dir = PathBuf::from("C:\\rec\\a");
+        let mut s = RecorderScreen::default();
+        assert!(s.live_started(dir.clone()));
+        assert_eq!(s.transcript_empty_state(), "Listening...");
+        s.live_line(&dir, &live(Track::Mic, 0, "live"));
+        s.live_stopped();
+        assert!(!s.live_on);
+
+        // The final job starts: the live lines stay until its transcript arrives.
+        s.asr_started(dir.clone());
+        assert_eq!(
+            s.transcript_segments.len(),
+            1,
+            "live lines are kept while it runs"
+        );
+        let t = Transcript {
+            model: ModelInfo {
+                name: "m".into(),
+                revision: "r".into(),
+                precision: "int8".into(),
+            },
+            created: "2026-11-25T10:00:00".into(),
+            lines: vec![
+                live(Track::Mic, 0, "final one"),
+                live(Track::System, 2_000, "final two"),
+            ],
+        };
+        s.asr_done(&dir, &t);
+        let texts: Vec<_> = s
+            .transcript_segments
+            .iter()
+            .map(|x| x.text.as_str())
+            .collect();
+        assert_eq!(texts, ["final one", "final two"]);
     }
 }

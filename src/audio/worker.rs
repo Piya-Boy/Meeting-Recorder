@@ -466,6 +466,7 @@ impl Worker {
             return;
         }
 
+        self.emit(Event::SessionStarted { dir: dir.clone() });
         self.session = Some(Session {
             dir,
             rate: req.sample_rate,
@@ -1141,5 +1142,21 @@ mod tests {
             .path();
         assert_eq!(read_wav(&session.join("system.wav")).len(), 48_000);
         assert_eq!(read_wav(&session.join("mic.wav")).len(), 48_000);
+    }
+
+    #[test]
+    fn starting_a_session_reports_its_folder_once_the_files_exist() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        let dir = match r.wait("SessionStarted", |e| {
+            matches!(e, Event::SessionStarted { .. })
+        }) {
+            Event::SessionStarted { dir } => dir,
+            _ => unreachable!(),
+        };
+        assert!(dir.join("mic.wav").is_file() && dir.join("system.wav").is_file());
+        r.wait_state(SessionState::Recording);
+        r.h.send(Command::Stop);
+        assert_eq!(r.wait_saved(), dir, "the same folder is saved");
     }
 }
