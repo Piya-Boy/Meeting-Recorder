@@ -74,6 +74,12 @@ pub fn local_stamp() -> String {
     )
 }
 
+/// Placeholder stamp for non-Windows hosts (capture itself is Windows-only).
+#[cfg(not(windows))]
+pub fn local_stamp() -> String {
+    "1970-01-01_0000".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
