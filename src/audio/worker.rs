@@ -101,13 +101,18 @@ struct Track {
     writer: WavWriter<std::fs::File>,
     clock: TrackClock,
     stream: Option<Box<dyn Stream>>,
+    /// What the stream was opened as; a lost process source waits for the app, others for
+    /// the device.
+    kind: SourceKind,
+    /// Set while the source is lost: when to try again.
+    retry_at: Option<Instant>,
     last_flush: u64,
     level_db: f32,
     last_chunk: Option<Instant>,
 }
 
 impl Track {
-    fn create(dir: &Path, file: &str, rate: u32) -> io::Result<Track> {
+    fn create(dir: &Path, file: &str, rate: u32, kind: SourceKind) -> io::Result<Track> {
         let f = OpenOptions::new()
             .read(true)
             .write(true)
@@ -116,7 +121,10 @@ impl Track {
         Ok(Track {
             writer: WavWriter::new(f, rate)?,
             clock: TrackClock::new(rate),
+
             stream: None,
+            kind,
+            retry_at: None,
             last_flush: 0,
             level_db: SILENT_DB,
             last_chunk: None,
@@ -158,6 +166,7 @@ impl Track {
 struct Session {
     dir: PathBuf,
     rate: u32,
+    origin: Instant,
     system: Option<Track>,
     mic: Option<Track>,
     /// After Resume, the first chunk maps the timeline onto the end of both tracks.
@@ -217,7 +226,7 @@ impl Session {
 
 struct Worker {
     backend: Arc<dyn Backend>,
-    #[allow(dead_code)] // used by the retry logic
+
     cfg: WorkerConfig,
     cmd_rx: Receiver<Command>,
     msg_tx: Sender<Msg>,
@@ -248,6 +257,8 @@ impl Worker {
                 self.handle_msg(m);
                 busy = true;
             }
+
+            self.retry_lost();
             if !busy {
                 if let Ok(m) = self.msg_rx.recv_timeout(Duration::from_millis(5)) {
                     self.handle_msg(m);
@@ -304,18 +315,26 @@ impl Worker {
         }
     }
 
+    /// The meeting app's process when one runs (and opens), else the whole system's sound.
     fn open_system(
         &self,
         req: &StartRequest,
         origin: Instant,
-    ) -> Result<(Box<dyn Stream>, SourceStatus), String> {
-        let kind = SourceKind::WholeSystem {
-            device: req.system_device.clone(),
+    ) -> Result<(Box<dyn Stream>, SourceKind, SourceStatus), String> {
+        let open = |kind: SourceKind| {
+            self.backend
+                .open(kind.clone(), origin, req.sample_rate, self.msg_tx.clone())
+                .map(|s| (s, kind))
         };
-        let s = self
-            .backend
-            .open(kind, origin, req.sample_rate, self.msg_tx.clone())?;
-        Ok((s, SourceStatus::Active))
+        if let Some(pid) = self.backend.meeting_target() {
+            if let Ok((s, kind)) = open(SourceKind::Process { pid }) {
+                return Ok((s, kind, SourceStatus::Active));
+            }
+        }
+        let (s, kind) = open(SourceKind::WholeSystem {
+            device: req.system_device.clone(),
+        })?;
+        Ok((s, kind, SourceStatus::AllSystemFallback))
     }
 
     fn start(&mut self, req: StartRequest) {
@@ -334,11 +353,11 @@ impl Worker {
         self.transition(Transition::Begin);
         let origin = Instant::now();
 
-        let mut opened: Vec<(Source, Box<dyn Stream>)> = Vec::new();
+        let mut opened: Vec<(Source, Box<dyn Stream>, SourceKind)> = Vec::new();
         if req.system {
             match self.open_system(&req, origin) {
-                Ok((s, status)) => {
-                    opened.push((Source::System, s));
+                Ok((s, kind, status)) => {
+                    opened.push((Source::System, s, kind));
                     self.emit(Event::SourceStatus {
                         source: Source::System,
                         status,
@@ -359,12 +378,13 @@ impl Worker {
             let kind = SourceKind::Mic {
                 device: req.mic_device.clone(),
             };
+
             match self
                 .backend
-                .open(kind, origin, req.sample_rate, self.msg_tx.clone())
+                .open(kind.clone(), origin, req.sample_rate, self.msg_tx.clone())
             {
                 Ok(s) => {
-                    opened.push((Source::Mic, s));
+                    opened.push((Source::Mic, s, kind));
                     self.emit(Event::SourceStatus {
                         source: Source::Mic,
                         status: SourceStatus::Active,
@@ -390,7 +410,7 @@ impl Worker {
         let dir = match naming::session_dir(&req.base_dir, &naming::local_stamp(), &req.name) {
             Ok(d) => d,
             Err(e) => {
-                for (_, s) in opened {
+                for (_, s, _) in opened {
                     s.stop();
                 }
                 self.emit(Event::Error(format!(
@@ -405,13 +425,15 @@ impl Worker {
         let mut mic = None;
         let mut failure = None;
         let mut rest = opened.into_iter();
-        for (source, stream) in rest.by_ref() {
+
+        for (source, stream, kind) in rest.by_ref() {
             let file = if source == Source::System {
                 "system.wav"
             } else {
                 "mic.wav"
             };
-            match Track::create(&dir, file, req.sample_rate) {
+
+            match Track::create(&dir, file, req.sample_rate, kind) {
                 Ok(mut t) => {
                     t.stream = Some(stream);
                     if source == Source::System {
@@ -428,7 +450,7 @@ impl Worker {
             }
         }
         if let Some(e) = failure {
-            for (_, s) in rest {
+            for (_, s, _) in rest {
                 s.stop();
             }
             for t in [system, mic].into_iter().flatten() {
@@ -447,6 +469,7 @@ impl Worker {
         self.session = Some(Session {
             dir,
             rate: req.sample_rate,
+            origin,
             system,
             mic,
             pending_rebase: false,
@@ -460,7 +483,77 @@ impl Worker {
     fn handle_msg(&mut self, m: Msg) {
         match m {
             Msg::Chunk(c) => self.handle_chunk(c),
-            Msg::Lost(_) => {} // handled by the resilience logic
+
+            Msg::Lost(source) => self.handle_lost(source),
+        }
+    }
+
+    fn handle_lost(&mut self, source: Source) {
+        if !matches!(self.state, SessionState::Recording | SessionState::Paused) {
+            return;
+        }
+        let retry_at = Instant::now() + self.cfg.retry_interval;
+        let Some(t) = self.session.as_mut().and_then(|s| s.track_mut(source)) else {
+            return;
+        };
+        if let Some(stream) = t.stream.take() {
+            stream.stop();
+        }
+        t.retry_at = Some(retry_at);
+        let status = match t.kind {
+            SourceKind::Process { .. } => SourceStatus::WaitingForApp,
+            _ => SourceStatus::DeviceLost,
+        };
+        self.emit(Event::SourceStatus { source, status });
+    }
+
+    /// Reopens lost sources whose retry time has come: the mic and a whole-system source on
+    /// their device, a process source on whatever meeting app runs now.
+    fn retry_lost(&mut self) {
+        if !matches!(self.state, SessionState::Recording | SessionState::Paused) {
+            return;
+        }
+        let now = Instant::now();
+        let Some(sess) = self.session.as_mut() else {
+            return;
+        };
+        let (rate, origin) = (sess.rate, sess.origin);
+        let mut reopened = Vec::new();
+        for source in [Source::System, Source::Mic] {
+            let Some(t) = sess.track_mut(source) else {
+                continue;
+            };
+            if t.retry_at.is_none_or(|at| at > now) {
+                continue;
+            }
+            let kind = match &t.kind {
+                SourceKind::Process { .. } => match self.backend.meeting_target() {
+                    Some(pid) => SourceKind::Process { pid },
+                    None => {
+                        t.retry_at = Some(now + self.cfg.retry_interval);
+                        continue;
+                    }
+                },
+                other => other.clone(),
+            };
+            match self
+                .backend
+                .open(kind.clone(), origin, rate, self.msg_tx.clone())
+            {
+                Ok(stream) => {
+                    t.stream = Some(stream);
+                    t.kind = kind;
+                    t.retry_at = None;
+                    reopened.push(source);
+                }
+                Err(_) => t.retry_at = Some(now + self.cfg.retry_interval),
+            }
+        }
+        for source in reopened {
+            self.emit(Event::SourceStatus {
+                source,
+                status: SourceStatus::Active,
+            });
         }
     }
 
@@ -585,7 +678,7 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::backend::{FailKind, FakeBackend};
+    use crate::audio::backend::{FailKind, FakeBackend, SourceKind};
     use crate::audio::session::{
         Command, DeviceInfo, Event, SessionState, Source, SourceStatus, StartRequest,
     };
@@ -878,5 +971,175 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn opened_has(r: &Rig, kind: SourceKind) -> bool {
+        r.fake.opened().contains(&kind)
+    }
+    fn whole() -> SourceKind {
+        SourceKind::WholeSystem { device: None }
+    }
+    fn status(source: Source, status: SourceStatus) -> impl Fn(&Event) -> bool {
+        move |e| matches!(e, Event::SourceStatus { source: s, status: st } if *s == source && *st == status)
+    }
+
+    #[test]
+    fn no_meeting_app_falls_back_to_whole_system() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait(
+            "fallback status",
+            status(Source::System, SourceStatus::AllSystemFallback),
+        );
+        assert!(opened_has(&r, whole()));
+    }
+
+    #[test]
+    fn meeting_app_found_opens_process_source() {
+        let mut r = Rig::new();
+        r.fake.set_target(Some(42));
+        r.start(true, true);
+        r.wait(
+            "system active",
+            status(Source::System, SourceStatus::Active),
+        );
+        r.wait_state(SessionState::Recording);
+        assert!(opened_has(&r, SourceKind::Process { pid: 42 }));
+        assert!(!opened_has(&r, whole()));
+        r.drain();
+        assert!(!r
+            .events
+            .iter()
+            .any(status(Source::System, SourceStatus::AllSystemFallback)));
+    }
+
+    #[test]
+    fn process_open_failure_falls_back_to_whole_system() {
+        let mut r = Rig::new();
+        r.fake.set_target(Some(1));
+        r.fake.fail_open(FailKind::Process);
+        r.start(true, true);
+        r.wait(
+            "fallback status",
+            status(Source::System, SourceStatus::AllSystemFallback),
+        );
+        assert!(opened_has(&r, whole()));
+    }
+
+    #[test]
+    fn fallback_does_not_switch_mid_recording() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.set_target(Some(9));
+        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
+        assert!(!opened_has(&r, SourceKind::Process { pid: 9 }));
+    }
+
+    #[test]
+    fn app_exit_waits_then_reattaches() {
+        let mut r = Rig::new();
+        r.fake.set_target(Some(5));
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.push(Source::Mic, 0, tone(48_000, 2));
+        r.fake.set_target(None);
+        assert!(r.fake.lose(Source::System));
+        r.wait(
+            "waiting for app",
+            status(Source::System, SourceStatus::WaitingForApp),
+        );
+        r.fake.set_target(Some(7));
+        r.wait("reattached", status(Source::System, SourceStatus::Active));
+        assert!(opened_has(&r, SourceKind::Process { pid: 7 }));
+        r.fake.push(Source::System, 96_000, tone(48_000, 3));
+        r.fake.push(Source::Mic, 48_000, tone(96_000, 4));
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        let sys = read_wav(&dir.join("system.wav"));
+        let mic = read_wav(&dir.join("mic.wav"));
+        assert_eq!(sys.len(), mic.len());
+        assert_eq!(sys.len(), 144_000);
+        assert!(
+            sys[48_000..96_000].iter().all(|&s| s == 0),
+            "the gap is silence"
+        );
+        assert!(sys[96_000..].iter().all(|&s| s == 3));
+    }
+
+    #[test]
+    fn mic_lost_continues_system_and_reattaches() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.push(Source::Mic, 0, tone(48_000, 2));
+        assert!(r.fake.lose(Source::Mic));
+        r.wait("device lost", status(Source::Mic, SourceStatus::DeviceLost));
+        r.wait("mic back", status(Source::Mic, SourceStatus::Active));
+        r.fake.push(Source::System, 48_000, tone(48_000, 1));
+        r.fake.push(Source::Mic, 96_000, tone(48_000, 2));
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        let sys = read_wav(&dir.join("system.wav"));
+        let mic = read_wav(&dir.join("mic.wav"));
+        assert_eq!(sys.len(), mic.len());
+        assert_eq!(mic.len(), 144_000);
+    }
+
+    #[test]
+    fn stop_while_paused_finalizes_equal_length() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.push(Source::Mic, 0, tone(24_000, 2));
+        r.h.send(Command::Pause);
+        r.wait_state(SessionState::Paused);
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        assert_eq!(read_wav(&dir.join("system.wav")).len(), 48_000);
+        assert_eq!(read_wav(&dir.join("mic.wav")).len(), 48_000);
+    }
+
+    #[test]
+    fn stop_while_source_lost_finalizes_equal_length() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.fail_open(FailKind::Mic); // so it cannot reattach
+        r.fake.push(Source::System, 0, tone(96_000, 1));
+        r.fake.push(Source::Mic, 0, tone(48_000, 2));
+        assert!(r.fake.lose(Source::Mic));
+        r.wait("device lost", status(Source::Mic, SourceStatus::DeviceLost));
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        let mic = read_wav(&dir.join("mic.wav"));
+        assert_eq!(read_wav(&dir.join("system.wav")).len(), 96_000);
+        assert_eq!(mic.len(), 96_000);
+        assert!(
+            mic[48_000..].iter().all(|&s| s == 0),
+            "lost time is silence"
+        );
+    }
+
+    #[test]
+    fn drop_handle_mid_recording_finalizes_files() {
+        let mut r = Rig::new();
+        r.start(true, true);
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.push(Source::Mic, 0, tone(24_000, 2));
+        let Rig { h, base, .. } = r;
+        drop(h);
+        let session = std::fs::read_dir(&base)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(read_wav(&session.join("system.wav")).len(), 48_000);
+        assert_eq!(read_wav(&session.join("mic.wav")).len(), 48_000);
     }
 }
