@@ -101,3 +101,8 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Transcripts: title, date, duration, "Lines" column, first line as preview; search placeholder without "(SQLite FTS)"; Copy gives the real text.
 - Detail: date, duration, "N lines"; rows with time stamp, You / Others chip, selectable text; no edit hint (read-only).
 - Checked with screenshots of the real exe in English: list, delete modal, processing, transcribed, Transcripts list, detail (aligned chip column). Not screenshotted: Thai, light theme, long transcript.
+
+## Export buttons with real files (2026-11-25)
+
+- Transcripts rows and the detail top bar: JSON, SRT and TXT now write the file next to the recording and open Explorer with it selected; the toast says "Exported. The file is in the recording's folder." (or "Could not export the transcript."). Sample rows (dev flags without `--audio`) still say "not wired".
+- Checked with screenshots of the real exe in English (detail page with the toast). Not screenshotted: Thai, light theme.

@@ -1,7 +1,7 @@
 # Export transcripts as TXT, SRT and JSON — design
 
 Date: 2026-11-25. Branch `feature/export-transcripts` (from `feature/asr-transcription`, which holds the library work).
-Status: the user answered "ทำเลย" to the proposal "Export TXT / SRT / JSON next", and earlier asked for no more
+Status: implemented (results in `TASKS.md`). The user answered "ทำเลย" to the proposal "Export TXT / SRT / JSON next", and earlier asked for no more
 questions, so this is approved as proposed. Every call below is the author's and is also a ledger ruling.
 
 ## Intent

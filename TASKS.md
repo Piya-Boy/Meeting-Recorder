@@ -21,7 +21,8 @@ _None._
   - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
 - [ ] Task: Library follow-ups (open items of the real-data work)
   - Playback: the Recordings player is hidden for real rows; there is no audio output path yet (the row has an "Open folder" button instead).
-  - Editing transcript text on the detail page (read-only for now) and Export TXT / SRT / JSON (buttons still say "not wired").
+  - Editing transcript text on the detail page (read-only for now).
+  - Export: choosing the destination (exports go next to the recording; a Save dialog would need the `rfd` crate and a thread) and WebVTT / DOCX.
   - A folder added or removed outside the app (Explorer) appears only when the screen is opened again: no folder watch and no refresh button.
   - Settings > Storage folders and the "index.db" line are still sample data; the library reads the Recorder's destination.
   - SQLite index: only if listing gets slow (200 sessions scan in 37 ms in a debug build).
@@ -119,6 +120,17 @@ _None._
     - PARTIAL "a saved recording adds a row without reopening": unit test only (the list refreshes on `Saved`).
   - Not verified: Thai screenshots of the new rows; keyboard focus on the new row buttons; a transcript of a long meeting on the detail page.
   - Commit: branch `feature/library-real-data` (stacked on `feature/asr-transcription`), not pushed, no PR.
+
+- [x] Task: Export transcripts as TXT, SRT and JSON (branch `feature/export-transcripts`; spec `docs/superpowers/specs/2026-11-25-transcript-export-design.md`, plan `docs/superpowers/plans/2026-11-25-transcript-export.md`)
+  - Built: `src/export.rs` builds SRT (numbered cues, `HH:MM:SS,mmm`, `You:` / `Others:` prefix, text flattened to one line so a blank line never splits a cue) and produces the file for a recording. The JSON, SRT and TXT buttons on the Transcripts rows and on the detail page write it next to the recording and show it selected in Explorer. `transcript.json` and `transcript.txt` written by the transcription are never overwritten (an export of those returns them; TXT is written only if missing); `transcript.srt` is rewritten on each export. Delete also removes `transcript.srt` and its temp file. Sample rows keep the "not wired" toast.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 289 passed, 6 ignored (12 new). Removing `transcript.srt` from the delete list and making TXT always overwrite each made a test fail.
+  - Acceptance checks run on this machine, real exe, mouse clicks:
+    - PASS SRT from a Transcripts row: file written, content correct (2 cues, `Others:` prefix, comma milliseconds), Explorer opened the folder (name with spaces) with `transcript.srt` selected.
+    - PASS SRT, TXT and JSON from the detail page: toast "Exported..." shown; Explorer selected `transcript.txt` and `transcript.json` (read through Shell.Application); the SHA-256 of `transcript.txt` was unchanged.
+    - PASS delete through the modal after an export removed the whole folder.
+    - PARTIAL failure notice ("Could not export the transcript."): unit test only, not driven in the window.
+    - Not verified: Thai screenshot of the toast; opening the SRT in a subtitle player.
+  - Commit: branch `feature/export-transcripts` (from `feature/asr-transcription`), not pushed, no PR.
 
 ## Rules
 

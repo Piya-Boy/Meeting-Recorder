@@ -216,3 +216,12 @@ _Add decisions below._
 - Alternatives: Parse `transcript.txt` (labels depend on the UI language at the time); a hand-written JSON reader.
 - Consequences: One more dependency (`serde` and `serde_json` were already in the lock file through other crates).
 - References: `Cargo.toml`, `src/library.rs`
+
+### 2026-11-25 - Exports go next to the recording, no Save dialog
+
+- Status: Accepted
+- Context: The Export JSON / SRT / TXT buttons had no behaviour. The library already keeps everything about a recording in its own folder.
+- Decision: An export writes (or returns) the file in the recording's folder and shows it selected in Explorer (`explorer /select,"<path>"`). `transcript.json` and `transcript.txt` are the files the transcription wrote and are never overwritten; `transcript.srt` is derived and rewritten each time; the app's delete removes it.
+- Alternatives: A native Save dialog through the `rfd` crate (new dependency, and a blocking call that needs its own thread and a channel); clipboard only (already exists as Copy).
+- Consequences: No choice of destination: the user copies the file from Explorer. An existing `transcript.txt` keeps the labels of the language it was written in. Revisit with a Save dialog if users ask.
+- References: `src/export.rs`, `docs/superpowers/specs/2026-11-25-transcript-export-design.md`
