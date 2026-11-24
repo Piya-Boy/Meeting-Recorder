@@ -112,3 +112,9 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Recordings live rows: a Play button before Open folder (it becomes a filled Pause button for the recording that is playing). The bottom bar appears for the loaded recording: play/pause, title, "Track: System + Mic Mix", elapsed time, a seek bar (a click seeks at once; a drag shows the new place and seeks on release), total time, and a close (X) button. The speed chip and the volume icon are drawn only in the sample (preview) mode.
 - New strings (English and Thai): "Play", "Close player", "Stop recording before playing.", "Playback stopped because a recording started.", "Could not play the recording.".
 - Checked with screenshots of the real exe in English: bar while playing, paused, after a seek, at the end, the delete modal while playing, and the two toasts. Not screenshotted: Thai, light theme.
+
+## Live transcript while recording (2026-11-25)
+
+- Recorder transcript panel: while a recording runs with the model installed and "Partial transcription" on, the panel says "Listening..." and then shows lines in time order (time, "You" or "Others", text); the final transcript replaces them after Stop. With the setting off the panel keeps its old text until Stop.
+- Settings > Transcription: "Partial transcription" now reads "Show transcript lines while recording. Each line appears after a pause." and "Streaming chunk window" reads "How often new audio is read for the live lines."; the note under them now says "Live lines are a preview. The final transcript is made after you stop and may differ a little." New strings (English and Thai): "Listening...", "Live transcript stopped." and the three above.
+- Checked with screenshots of the real exe in English: "Listening...", lines at 59 s and at 2:01, the final transcript after Stop, the setting off. Not screenshotted: Thai, light theme.

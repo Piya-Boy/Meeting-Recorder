@@ -16,9 +16,10 @@ _None._
   - Partly run: searching `ทำ` finds a line whose text has U+0E4D U+0E32. Covered by unit tests (normalisation and the filter); not driven through the search box of the real window.
   - Known rough edges: the "Recording saved to" toast covers the footer Cancel button for a few seconds; a failed model delete shows "Download failed: ..."; the "Waiting for the model" text and its "Open Transcription settings" button sit slightly apart vertically; the Thai running-state screenshot was not taken; a microphone quieter than -50 dBFS rms is treated as silence; the below-normal priority applies to the worker thread, not to ONNX Runtime's own threads.
   - Verification: do each item and record the result here.
-- [ ] Task: Live transcript during recording (the transcript is made after Stop only)
-  - Acceptance Criteria: partial and final lines appear while recording; Settings "Partial transcription" and "Streaming chunk window" take effect (today they are shown but do nothing).
-  - Verification: Record 2 minutes with speech and compare the lines with the saved transcript.
+- [ ] Task: Live transcript follow-ups (open items of the live transcript work)
+  - Not tried: a real person speaking into the microphone (the 2-minute run played recorded speech through the speakers, so only the system track had speech; the microphone read -90 dB); the model-not-installed path in the real window (unit tests only; the 1 GB model was not deleted to try it); Thai and light-theme screenshots of the "Listening..." state.
+  - Known limits: a line appears only after its segment ends (a pause of 0.5 s after 8 s of speech, 1.2 s after 2 s, or 25 s at most), so with continuous speech the first line came more than 15 s after the speech began; there are no words for a sentence that is still being spoken; a live line can differ from the final line of the same moment (the final transcript cuts and reads the whole file); a recording that starts while a transcription job is on the panel gets no live lines (its final transcript still comes).
+  - Verification: do each item and record the result here.
 - [ ] Task: Library follow-ups (open items of the real-data work)
   - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
   - Editing transcript text on the detail page (read-only for now).
@@ -146,6 +147,19 @@ _None._
   - Known limits: only the mixed track; no speed, volume or output-device choice; one recording at a time; a hot-plugged default device change is not followed.
   - Open (minor): one run of the full suite failed `asr::download::tests::cancel_keeps_the_part_and_a_second_run_resumes` ("part is 100000 bytes": the cancel raced the 100 KB fake file); it passed 8 of 8 alone and 3 of 3 in full runs afterwards. The test is older than this work and depends on timing.
   - Commit: branch `feature/playback` (from `feature/export-transcripts`), not pushed, no PR.
+
+- [x] Task: Live transcript while recording (branch `feature/live-transcript`; spec `docs/superpowers/specs/2026-11-25-live-transcript-design.md`, plan `docs/superpowers/plans/2026-11-25-live-transcript.md`)
+  - Built: `SegmentStream::poll` (cuts the ready segments without flushing the tail), `WavReader::refresh`, `src/asr/live.rs` (`LiveTrack` follows one growing WAV: reads what is new, resamples, cuts, recognizes, returns lines), `Command::LiveStart` / `LiveStop` and `Event::LiveLine` / `LiveEnded` in the ASR worker (queued like a job, so one model copy serves both; a job for another recording waits for the live run to end), `Event::SessionStarted { dir }` from the audio worker, and the app and Recorder wiring (the panel shows "Listening..." and then the lines in time order; the final transcript replaces them after Stop). "Partial transcription" off means no live run; "Streaming chunk window" (500, 1,000 or 2,000 ms) is how often new audio is read. Nothing is written to disk during live; the files, `transcript.json` and `transcript.txt` are the same as before.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 339 passed, 7 ignored. Tests were written first and seen to fail (compile errors). Mutations that each made a test fail: a `LiveStop` that never sets the stop flag (the stop test timed out); not stopping live on `Saved` (the app test failed). The worker and app tests were stable over repeated runs. One full-suite run failed two older worker tests (they expect no model): process ids repeat, and `audio::temp_dir` reused a folder an earlier run had left with a model in it (5,469 folders had piled up in %TEMP%); `temp_dir` now empties its folder first (own commit) and the leftovers were removed.
+  - Acceptance checks run on this machine, real exe, mouse clicks, the real model (int8). Speech was 2 minutes of recorded Thai clips played through the speakers and captured by the system track:
+    - PASS live lines: at 15 s the panel read "Listening..."; at 59 s it held 3 lines (00:00:04, 00:00:24, 00:00:41); at 2:01 it held 7 lines. After Stop the final transcript replaced them with 8 lines at the same times plus one at 00:01:58; some words differed from the live lines (for example the line at 00:01:24).
+    - PASS equal tracks: `mic.wav` and `system.wav` both held 5,837,976 frames (121.62 s) after the live run.
+    - PASS Partial transcription off (switched in Settings, then a 23 s recording): the panel kept "The transcript appears after you stop recording" and no line came; after Stop the final transcript was written (1 line).
+    - PASS stop about 3 s after start with live on: both WAVs held 117,976 frames and the final transcript was written (1 line).
+    - CPU: the process CPU time went from about 2 s to about 38 s over the 2-minute live phase (read from a 5 s sampler; about 0.3 of one core on average), then about 20 s more for the final job. Not measured: the effect on the recording itself beyond the equal frame counts.
+    - Not run: see the follow-ups task above.
+  - Known limits: see the follow-ups task above.
+  - Commit: branch `feature/live-transcript` (from `main`), not pushed, no PR.
 
 ## Rules
 

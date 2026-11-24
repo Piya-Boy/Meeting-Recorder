@@ -3,6 +3,7 @@
 Date: 2026-11-25. Branch `feature/live-transcript` (from `main`, which holds PRs #2 to #5).
 Status: the user chose "live transcript" from the list of next steps and earlier asked for no more questions, so
 this is approved as proposed. Every call below is the author's and is also a ledger ruling.
+Result: built and checked on the real exe with the real model (see `TASKS.md` and `DECISIONS.md`).
 
 ## Intent
 

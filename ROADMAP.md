@@ -18,10 +18,11 @@
 - [x] UI: dark and light themes, accent colours, font scaling, English / Thai language
 - [x] UI: app logo, exe icon, shortcuts, keyboard focus, engine states
 - [ ] Audio capture (Windows WASAPI, dual track): built and checked on this machine, real Zoom/Teams acceptance open (see TASKS.md)
-- [ ] Transcription (OpenThai ASR on ONNX Runtime): built and checked on this machine (CER 4.7-5.3% on clips); clean-capture speech run, live transcript and the licence gate open (see TASKS.md)
+- [ ] Transcription (OpenThai ASR on ONNX Runtime): built and checked on this machine (CER 4.7-5.3% on clips); clean-capture speech run and the licence gate open (see TASKS.md)
 - [ ] Storage (SQLite index, WAV / transcript files): WAV and transcript files are real and the lists read them from disk; no SQLite index (not needed yet, see DECISIONS.md)
 - [x] Exports (TXT, SRT, JSON): written next to the recording and shown in Explorer; no Save dialog
 - [x] Playback of recordings (both tracks mixed, play / pause / seek, WASAPI default device): checked on this machine with the real exe and a loopback test; no speed, volume or device choice
+- [x] Live transcript while recording (lines appear after each pause and the final transcript replaces them after Stop): checked on this machine with the real exe and model; no words for an unfinished sentence, a person speaking into the microphone not tried
 - [x] Persist settings
 
 ### M3 - Stabilization (Not Started)

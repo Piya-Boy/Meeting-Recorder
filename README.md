@@ -16,7 +16,7 @@ The user interface is finished. The recording, transcription and storage backend
 | Saved preferences, keyboard shortcuts, focus ring | Done |
 | App logo (window, sidebar, About, `.exe` icon) | Done |
 | Audio capture (Windows WASAPI, dual track) | Built; real Zoom / Teams call check still open |
-| Transcription (OpenThai ASR on ONNX Runtime) | Built, runs after Stop; no live transcript yet |
+| Transcription (OpenThai ASR on ONNX Runtime) | Built; lines appear while recording, the final transcript is made after Stop |
 | Storage (SQLite index, WAV and transcript files) | WAV and transcript files and the library lists are real; no SQLite index |
 | Exports (TXT, SRT, JSON) | Done: written next to the recording and shown in Explorer |
 
@@ -25,7 +25,7 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 ## Planned capabilities
 
 - Capture system audio (WASAPI loopback) and the microphone as separate tracks.
-- Transcribe Thai speech on the device with OpenThai ASR running on ONNX Runtime, with a live partial transcript while recording.
+- Transcribe Thai speech on the device with OpenThai ASR running on ONNX Runtime, with transcript lines shown while recording.
 - Keep a local library of recordings and transcripts, indexed in SQLite.
 - Export transcripts as TXT, SRT and JSON.
 
@@ -33,7 +33,7 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 
 | Screen | Purpose |
 |---|---|
-| Recorder | Start, pause and stop a session; live timer, audio sources with level meters, live transcript, engine status |
+| Recorder | Start, pause and stop a session; live timer, audio sources with level meters, transcript lines while recording, engine status |
 | Recordings | Searchable, sortable library with playback bar, transcribe and delete actions |
 | Transcripts | Searchable list of transcripts with title, date, duration, word count, a text preview and export buttons (TXT, SRT, JSON) |
 | Transcript detail | Document viewer for a single transcript, with export |

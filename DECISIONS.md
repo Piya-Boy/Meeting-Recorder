@@ -234,3 +234,21 @@ _Add decisions below._
 - Alternatives: `cpal` or `rodio` (a new dependency tree for something the existing crate does); decoding the whole file into memory (one hour of two tracks is hundreds of MB; the player streams blocks from disk instead); one track at a time with a selector (more UI, and the user did not choose it).
 - Consequences: Voices that overlap are summed and can clip (the clamp makes that audible, not silent). No volume, speed or device choice yet. Changing the default device while playing is not followed. Tests use a fake sink, so only one `#[ignore]` test touches the real device.
 - References: `src/playback.rs`, `docs/superpowers/specs/2026-11-25-playback-design.md`
+
+### 2026-11-25 - Live transcript runs inside the existing ASR worker
+
+- Status: Accepted
+- Context: Lines should appear while a meeting is recorded. The model reads a whole segment at a time (no streaming state), runs at about 0.06 of real time, and one copy takes about 1 GB of memory.
+- Decision: A live run is queued work in the one ASR worker (`Command::LiveStart` / `LiveStop`, `Event::LiveLine` / `LiveEnded`), so one model copy serves live and the final job. It follows the growing `mic.wav` and `system.wav` by file length (the files can be read while the recorder writes them), cuts segments with the streaming segmenter and recognizes each ready segment. The audio worker announces the folder with `Event::SessionStarted`, once both files exist. The app ends the live run before it sends the final job, and a job for another recording waits for a live run to end. A live error stops only the live run and shows a notice; nothing is written to disk.
+- Alternatives: A second worker with its own model (about 1 GB more memory); decoding with the model's streaming mode (needs the streaming state and a different ONNX export than the one in use); receiving samples from the audio worker over a channel (couples recording to recognition and cannot catch up after a stall).
+- Consequences: A line appears only after its segment ends, and the WAV header lag of up to 5 s adds to that. While live runs, a transcription job of another recording waits, so a recording started while a job is on the panel gets no live lines. Live uses about 0.3 of one core on this machine.
+- References: `src/asr/worker.rs`, `src/asr/live.rs`, `docs/superpowers/specs/2026-11-25-live-transcript-design.md`
+
+### 2026-11-25 - Live lines are a preview; the final transcript replaces them
+
+- Status: Accepted
+- Context: Live lines are cut while the recording is still going and cannot see what comes after them; the final job reads each whole file.
+- Decision: Live lines are shown in the Recorder panel only and are replaced by the final transcript when it arrives (they stay on screen while the final job runs). Only the final transcript is saved. "Partial transcription" off means no live run and no CPU spent; "Streaming chunk window" (500, 1,000 or 2,000 ms) is how often new audio is read, not a decoding window. The settings note that promised live transcription "later" was replaced by one that says the lines are a preview.
+- Alternatives: Saving the live lines as the transcript (cheaper, but the lines are cut with less context and a crash would leave a half file); showing words of an unfinished sentence (the model cannot give them).
+- Consequences: Live and final text can differ a little (seen in the acceptance run). Nothing in the library or exports changes.
+- References: `src/screens/recorder.rs`, `src/app.rs`
