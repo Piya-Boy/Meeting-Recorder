@@ -35,6 +35,7 @@ _None._
   - Verification: do each item and record the result here.
 - [ ] Task: Flaky tests and CI settings (open items of the CI work)
   - `asr::worker::tests::the_model_is_unloaded_after_the_idle_time` failed once in 24 runs of the test binary started 4 at a time (the whole suite under load); 80 parallel runs of that test alone did not fail and the failure message was not kept. It waits 500 ms for a 100 ms idle limit, so a starved worker thread is the likely cause. Catch the message (`cargo test` in a loop with `--nocapture` logging) before changing it.
+  - Raise the pinned Rust toolchain (`rust-toolchain.toml`, now 1.96.0) and fix what its clippy adds: on 1.100 `chunks_exact_to_as_chunks` fires in 72 places (`as_chunks` is the suggested form), seen in the first CI run.
   - Set branch protection on `main` to require the `fmt`, `test` and `audit` checks once CI has passed on GitHub (repository settings; not done from here).
   - Verification: do each item and record the result here.
 - [ ] Task: Library follow-ups (open items of the real-data work)
