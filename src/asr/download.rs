@@ -291,6 +291,10 @@ mod tests {
         always_drop: bool,
         /// Flip a byte in the body of the data file.
         corrupt: bool,
+        /// Send only this many bytes of the data file the first time it is asked for from the
+        /// start, then hold the connection open until the client hangs up (0 = off). Lets a test
+        /// cancel with part of the file missing whatever size the client reads in.
+        stall_after: usize,
     }
 
     type RequestLog = Arc<Mutex<Vec<(String, Option<u64>)>>>;
@@ -369,6 +373,24 @@ mod tests {
         head.push_str("\r\n");
         let _ = s.write_all(head.as_bytes());
         let rest = &body[start..];
+        if b.stall_after > 0 && range.is_none() && path.ends_with(".data") {
+            let _ = s.write_all(&rest[..b.stall_after.min(rest.len())]);
+            s.set_read_timeout(Some(Duration::from_millis(20))).ok();
+            let began = std::time::Instant::now();
+            let mut one = [0u8; 1];
+            while began.elapsed() < Duration::from_secs(10) {
+                match s.read(&mut one) {
+                    Ok(0) => break,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    _ => break,
+                }
+            }
+            return;
+        }
         if n < b.drop_first {
             let _ = s.write_all(&rest[..b.drop_after.min(rest.len())]);
             return; // dropped: the connection closes with the body unfinished
@@ -633,9 +655,19 @@ mod tests {
     #[test]
     fn cancel_keeps_the_part_and_a_second_run_resumes() {
         let (files, specs) = fake_model();
-        let server = serve(files, Behavior::default());
+        // Only 30,000 of the 100,000 bytes are ever sent before the cancel, so the part is
+        // partial however the client's reads happen to be sized (a fast machine can deliver the
+        // whole file in one read, which made this test fail now and then).
+        let server = serve(
+            files,
+            Behavior {
+                stall_after: 30_000,
+                ..Behavior::default()
+            },
+        );
         let dir = crate::audio::temp_dir("download-cancel").join("m");
         let cancel = AtomicBool::new(false);
+        let began = std::time::Instant::now();
         let err = run(&dir, &specs, &server, &cancel, &|done, _| {
             if done > 20_000 {
                 cancel.store(true, Ordering::SeqCst);
@@ -643,10 +675,16 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(err, "cancelled");
+        // The server holds the connection open, so a read that ignored the cancel would wait
+        // for the 5 s stall limit of `tuning()` before anything noticed.
+        assert!(
+            began.elapsed() < Duration::from_secs(4),
+            "cancel was not prompt"
+        );
         let part = std::fs::metadata(dir.join("encoder.int8.onnx.data.part"))
             .unwrap()
             .len();
-        assert!(part > 0 && part < 100_000, "part is {part} bytes");
+        assert!(part > 0 && part <= 30_000, "part is {part} bytes");
         assert!(!dir.join(crate::asr::model::READY_MARKER).exists());
 
         cancel.store(false, Ordering::SeqCst);
