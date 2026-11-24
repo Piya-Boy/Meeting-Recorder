@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::asr::download;
 use crate::asr::engine::{OrtRecognizer, Recognizer};
+use crate::asr::live::LiveTrack;
 use crate::asr::model::{self, ModelStatus, Precision};
 use crate::asr::segment::segment_file;
 use crate::asr::transcript::{self, Line, ModelInfo, Track, Transcript};
@@ -52,6 +53,18 @@ pub enum Command {
     DeleteModel {
         precision: Precision,
     },
+    /// Follows the files of a recording that is still being written and reports lines as they
+    /// are recognized, reading new audio every `poll_ms`. Queued like a job; ends at `LiveStop`.
+    #[allow(dead_code)] // sent by the app in a later task
+    LiveStart {
+        dir: PathBuf,
+        precision: Precision,
+        threads: usize,
+        poll_ms: u64,
+    },
+    /// Ends the live run (or removes it from the queue). Does not touch the files.
+    #[allow(dead_code)] // sent by the app in a later task
+    LiveStop,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +88,17 @@ pub enum Event {
         transcript: Transcript,
     },
     Cancelled {
+        dir: PathBuf,
+    },
+    /// A line recognized during a live run.
+    #[allow(dead_code)] // shown by the app in a later task
+    LiveLine {
+        dir: PathBuf,
+        line: Line,
+    },
+    /// The live run for `dir` is over (stopped, failed, or never started: no model).
+    #[allow(dead_code)] // read by the app in a later task
+    LiveEnded {
         dir: PathBuf,
     },
     /// A job is waiting: `position` 1 is the next to run. The Recorder only shows the running
@@ -150,6 +174,8 @@ impl AsrHandle {
                 cancel_download: cancel_download.clone(),
                 queue: RefCell::new(VecDeque::new()),
                 running: RefCell::new(None),
+                live: RefCell::new(None),
+                live_stop: Cell::new(false),
                 closed: Cell::new(false),
             },
             factory,
@@ -246,10 +272,18 @@ struct Job {
     threads: usize,
 }
 
+struct LiveJob {
+    dir: PathBuf,
+    precision: Precision,
+    threads: usize,
+    poll: Duration,
+}
+
 enum Work {
     Transcribe(Job),
     Download(Precision),
     Delete(Precision),
+    Live(LiveJob),
 }
 
 /// What the worker shares with the code running a job: the channels, the queue and the flags.
@@ -263,6 +297,9 @@ struct Io {
     queue: RefCell<VecDeque<Work>>,
     /// The folder of the running transcription, if one runs.
     running: RefCell<Option<PathBuf>>,
+    /// The folder of the running live transcription, if one runs, and whether it was told to stop.
+    live: RefCell<Option<PathBuf>>,
+    live_stop: Cell<bool>,
     /// The handle was dropped: stop as soon as possible.
     closed: Cell<bool>,
 }
@@ -345,6 +382,44 @@ impl Io {
                     });
                 }
             }
+            Command::LiveStart {
+                dir,
+                precision,
+                threads,
+                poll_ms,
+            } => {
+                let running_here = self.live.borrow().as_deref() == Some(dir.as_path());
+                let queued_here = self
+                    .queue
+                    .borrow()
+                    .iter()
+                    .any(|w| matches!(w, Work::Live(j) if j.dir == dir));
+                if running_here || queued_here {
+                    return;
+                }
+                self.queue.borrow_mut().push_back(Work::Live(LiveJob {
+                    dir,
+                    precision,
+                    threads,
+                    poll: Duration::from_millis(poll_ms.max(10)),
+                }));
+            }
+            Command::LiveStop => {
+                let mut removed = Vec::new();
+                self.queue.borrow_mut().retain(|w| match w {
+                    Work::Live(j) => {
+                        removed.push(j.dir.clone());
+                        false
+                    }
+                    _ => true,
+                });
+                for dir in removed {
+                    self.emit(Event::LiveEnded { dir });
+                }
+                if self.live.borrow().is_some() {
+                    self.live_stop.set(true);
+                }
+            }
             // The handle acts on these itself.
             Command::CancelTranscribe | Command::CancelDownload => {}
         }
@@ -390,6 +465,7 @@ impl Worker {
                     Work::Transcribe(job) => self.transcribe(&job),
                     Work::Download(p) => self.download(p),
                     Work::Delete(p) => self.delete(p),
+                    Work::Live(job) => self.live(&job),
                 }
                 continue;
             }
@@ -460,6 +536,109 @@ impl Worker {
         self.io.emit(Event::Model(event));
     }
 
+    /// The recognizer for `precision` and `threads`: the one kept from before, or a newly loaded
+    /// one. `None` after the failure was reported for `dir`.
+    fn acquire(&mut self, dir: &Path, precision: Precision, threads: usize) -> Option<Loaded> {
+        match self.loaded.take() {
+            Some(l) if l.precision == precision && l.threads == threads => Some(l),
+            old => {
+                drop(old); // free the memory of a model of another precision first
+                self.io.emit(Event::Engine(EngineEvent::Loading));
+                match self.factory.load(&self.io.model_dir(precision), threads) {
+                    Ok(rec) => {
+                        self.io.emit(Event::Engine(EngineEvent::Ready));
+                        Some(Loaded {
+                            rec,
+                            precision,
+                            threads,
+                            last_used: Instant::now(),
+                        })
+                    }
+                    Err(e) => {
+                        self.io.emit(Event::Engine(EngineEvent::Failed(e.clone())));
+                        self.io.error(dir, e);
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    fn live(&mut self, job: &LiveJob) {
+        self.io.live_stop.set(false);
+        *self.io.live.borrow_mut() = Some(job.dir.clone());
+        self.run_live(job);
+        *self.io.live.borrow_mut() = None;
+        if !self.io.closed.get() {
+            self.io.emit(Event::LiveEnded {
+                dir: job.dir.clone(),
+            });
+        }
+    }
+
+    /// Follows the files of `job.dir` until told to stop, the handle is dropped, or something
+    /// fails. Lines are reported as they are recognized; nothing is written to disk.
+    fn run_live(&mut self, job: &LiveJob) {
+        // No model, no live lines, and no error: the app shows "waiting for the model" as usual.
+        if model::status(&self.io.model_dir(job.precision), job.precision) != ModelStatus::Ready {
+            return;
+        }
+        let Some(mut loaded) = self.acquire(&job.dir, job.precision, job.threads) else {
+            return;
+        };
+        let io = &self.io;
+        let mut pending = vec![(Track::Mic, "mic.wav"), (Track::System, "system.wav")];
+        let mut tracks: Vec<LiveTrack> = Vec::new();
+        'run: loop {
+            io.pump();
+            if io.closed.get() || io.live_stop.get() {
+                break;
+            }
+            // A file that does not exist yet (or has no header yet) is tried again next time.
+            pending.retain(|(track, name)| {
+                let path = job.dir.join(name);
+                if !path.is_file() {
+                    return true;
+                }
+                match LiveTrack::open(&path, *track) {
+                    Ok(t) => {
+                        tracks.push(t);
+                        false
+                    }
+                    Err(_) => true,
+                }
+            });
+            let mut lines = Vec::new();
+            for t in &mut tracks {
+                if let Err(e) = t.poll(loaded.rec.as_mut(), &mut lines) {
+                    io.error(&job.dir, e);
+                    break 'run;
+                }
+            }
+            lines.sort_by_key(|l| l.start_ms);
+            for line in lines {
+                io.emit(Event::LiveLine {
+                    dir: job.dir.clone(),
+                    line,
+                });
+            }
+            let until = Instant::now() + job.poll;
+            loop {
+                io.pump();
+                if io.closed.get() || io.live_stop.get() {
+                    break 'run;
+                }
+                let left = until.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                std::thread::sleep(left.min(Duration::from_millis(10)));
+            }
+        }
+        loaded.last_used = Instant::now();
+        self.loaded = Some(loaded);
+    }
+
     fn transcribe(&mut self, job: &Job) {
         let io = &self.io;
         io.cancel_job.store(false, Ordering::SeqCst);
@@ -495,29 +674,10 @@ impl Worker {
         let total_secs: f32 = tracks.iter().map(|t| t.2).sum();
 
         // The model: loaded for the first job, kept for the next ones.
-        let mut loaded = match self.loaded.take() {
-            Some(l) if l.precision == job.precision && l.threads == job.threads => l,
-            old => {
-                drop(old); // free the memory of a model of another precision first
-                io.emit(Event::Engine(EngineEvent::Loading));
-                match self.factory.load(&model_dir, job.threads) {
-                    Ok(rec) => {
-                        io.emit(Event::Engine(EngineEvent::Ready));
-                        Loaded {
-                            rec,
-                            precision: job.precision,
-                            threads: job.threads,
-                            last_used: Instant::now(),
-                        }
-                    }
-                    Err(e) => {
-                        io.emit(Event::Engine(EngineEvent::Failed(e.clone())));
-                        return io.error(dir, e);
-                    }
-                }
-            }
+        let Some(mut loaded) = self.acquire(dir, job.precision, job.threads) else {
+            return;
         };
-
+        let io = &self.io;
         let outcome = Self::read_tracks(io, dir, &tracks, total_secs, loaded.rec.as_mut());
         loaded.last_used = Instant::now();
         self.loaded = Some(loaded);
@@ -1314,5 +1474,201 @@ mod tests {
         assert_eq!(&s[4..5], "-");
         assert_eq!(&s[10..11], "T");
         assert_eq!(&s[13..14], ":");
+    }
+
+    // ---- live transcription -----------------------------------------------------------
+
+    /// A track file as the recorder leaves it mid-recording (header says 0 bytes).
+    fn growing_wav(path: &Path, parts: &[Vec<i16>]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut w = WavWriter::new(file, 16_000).unwrap();
+        for p in parts {
+            w.write_samples(p).unwrap();
+        }
+        w.flush_header().unwrap();
+    }
+
+    fn append_wav(path: &Path, parts: &[Vec<i16>]) {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        for p in parts {
+            for v in p {
+                f.write_all(&v.to_le_bytes()).unwrap();
+            }
+        }
+        f.flush().unwrap();
+    }
+
+    impl Rig {
+        fn live_dir(&self, name: &str) -> PathBuf {
+            let dir = self.base.join("sessions").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        fn live_start(&self, dir: &Path) {
+            self.h().send(Command::LiveStart {
+                dir: dir.to_path_buf(),
+                precision: Precision::Int8,
+                threads: 4,
+                poll_ms: 20,
+            });
+        }
+
+        fn wait_line(&mut self, track: Track) -> Line {
+            match self.wait(
+                "a live line",
+                |e| matches!(e, Event::LiveLine { line, .. } if line.track == track),
+            ) {
+                Event::LiveLine { line, .. } => line,
+                _ => unreachable!(),
+            }
+        }
+
+        fn wait_live_ended(&mut self) {
+            self.wait("LiveEnded", |e| matches!(e, Event::LiveEnded { .. }));
+        }
+
+        fn live_lines(&self) -> usize {
+            self.events
+                .iter()
+                .filter(|e| matches!(e, Event::LiveLine { .. }))
+                .count()
+        }
+    }
+
+    #[test]
+    fn live_lines_arrive_while_the_files_grow_and_stop_ends_the_run() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-grow");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        growing_wav(&dir.join("system.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        let first_mic = rig.wait_line(Track::Mic);
+        let first_system = rig.wait_line(Track::System);
+        assert!(first_mic.start_ms < 1_000 && first_system.start_ms < 1_000);
+
+        append_wav(&dir.join("mic.wav"), &[speech(2.5), quiet(1.5)]);
+        let second_mic = rig.wait_line(Track::Mic);
+        assert!(second_mic.start_ms > first_mic.end_ms, "{second_mic:?}");
+
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+        assert_eq!(rig.live_lines(), 3, "{:?}", rig.events);
+        no_transcript(&dir);
+    }
+
+    #[test]
+    fn a_job_sent_during_live_runs_after_it_ends() {
+        let mut rig = Rig::new();
+        let live = rig.live_dir("live-first");
+        growing_wav(&live.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        let other = rig.session("job-after", Some(&[speech(2.0)]), None);
+        rig.live_start(&live);
+        rig.wait_line(Track::Mic);
+        rig.transcribe(&other);
+        std::thread::sleep(Duration::from_millis(200));
+        rig.pull();
+        assert!(
+            !rig.events.iter().any(|e| matches!(e, Event::Done { .. })),
+            "the job must wait for the live run: {:?}",
+            rig.events
+        );
+        rig.h().send(Command::LiveStop);
+        let (dir, _) = rig.wait_done();
+        assert_eq!(dir, other);
+        let ended = rig
+            .events
+            .iter()
+            .position(|e| matches!(e, Event::LiveEnded { .. }))
+            .expect("LiveEnded");
+        let done = rig
+            .events
+            .iter()
+            .position(|e| matches!(e, Event::Done { .. }))
+            .unwrap();
+        assert!(ended < done);
+    }
+
+    #[test]
+    fn live_with_a_missing_model_ends_without_an_error() {
+        let mut rig = Rig::with(FakeFactory::default(), Duration::from_secs(300), false);
+        let dir = rig.live_dir("live-no-model");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        rig.wait_live_ended();
+        assert!(
+            !rig.events.iter().any(|e| matches!(e, Event::Error { .. })),
+            "{:?}",
+            rig.events
+        );
+        assert_eq!(rig.live_lines(), 0);
+    }
+
+    #[test]
+    fn live_with_one_track_only_works() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-system-only");
+        growing_wav(&dir.join("system.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        let line = rig.wait_line(Track::System);
+        assert_eq!(line.track, Track::System);
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+        assert_eq!(rig.live_lines(), 1);
+    }
+
+    #[test]
+    fn a_track_file_that_appears_later_is_picked_up() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-late-file");
+        rig.live_start(&dir);
+        std::thread::sleep(Duration::from_millis(80));
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.wait_line(Track::Mic);
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+    }
+
+    #[test]
+    fn a_recognizer_error_during_live_is_reported_and_ends_it() {
+        let factory = FakeFactory {
+            fail_recognize: Some("boom".to_owned()),
+            ..FakeFactory::default()
+        };
+        let mut rig = Rig::with(factory, Duration::from_secs(300), true);
+        let dir = rig.live_dir("live-error");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        let (d, message) = rig.wait_error();
+        assert_eq!(d.as_deref(), Some(dir.as_path()));
+        assert!(message.contains("boom"), "{message}");
+        rig.wait_live_ended();
+    }
+
+    #[test]
+    fn live_stopped_before_it_starts_never_recognizes_anything() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-stop-first");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+        std::thread::sleep(Duration::from_millis(100));
+        rig.pull();
+        assert_eq!(rig.live_lines(), 0);
+        assert_eq!(rig.factory.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn dropping_the_handle_stops_a_live_run() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-drop");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0), quiet(1.5)]);
+        rig.live_start(&dir);
+        rig.wait_line(Track::Mic);
+        let t = Instant::now();
+        drop(rig.h.take());
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
     }
 }

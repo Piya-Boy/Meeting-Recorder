@@ -372,6 +372,8 @@ impl AppState {
             AsrEvent::Error { dir: None, message } => self.asr_notice = Some(message),
             // The job waits behind another; the panel keeps showing the running one.
             AsrEvent::Queued { .. } => {}
+            // Shown on the Recorder panel once the app starts live runs (next task).
+            AsrEvent::LiveLine { .. } | AsrEvent::LiveEnded { .. } => {}
         }
     }
 
