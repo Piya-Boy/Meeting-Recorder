@@ -46,9 +46,17 @@
 ## 7. Document
 
 - Update specifications.
-- Update TASKS.md.
-- Update ROADMAP.md.
+- Update TASKS.md. Every task needs a `Milestone:` sub-bullet, for example `  - Milestone: M2 - Core Features`.
+- ROADMAP.md milestones are generated from TASKS.md by `scripts/gen-roadmap.sh`. Do not edit the block between the `roadmap:begin` and `roadmap:end` markers by hand.
 - Record major decisions in DECISIONS.md.
+
+One-time setup per clone, so the pre-commit hook regenerates and stages ROADMAP.md:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Run `sh scripts/test-gen-roadmap.sh` after changing the script or the hook.
 
 ## 8. Deliver
 

@@ -81,3 +81,12 @@ _Add decisions below._
 - Alternatives: Skip the exe icon.
 - Consequences: Build needs the Windows SDK `rc.exe` to get the icon (present here).
 - References: `build.rs`
+
+### 2026-11-24 - ROADMAP.md generated from TASKS.md
+
+- Status: Accepted
+- Context: ROADMAP.md and TASKS.md were edited by hand and drifted apart.
+- Decision: TASKS.md is the single source of truth. Each task carries a `Milestone: M<number> - <name>` sub-bullet. `scripts/gen-roadmap.sh` (sh + awk) rewrites only the block between the `roadmap:begin` / `roadmap:end` markers in ROADMAP.md; `.githooks/pre-commit` runs it and stages the result. `.gitattributes` pins LF for `*.sh` and `.githooks/*` so `core.autocrlf=true` cannot break the shebang.
+- Alternatives: A hook that only blocks commits until ROADMAP is updated by hand (not automatic); a reminder or CLAUDE.md rule (not enforced).
+- Consequences: No new dependency. A task without a milestone tag blocks the commit. The hook is opt-in per clone (`git config core.hooksPath .githooks`). The script reads TASKS.md from the working tree, not the index, so a partly staged TASKS.md can produce a ROADMAP built from unstaged text. Goal and Exit Criteria in ROADMAP.md stay hand-written.
+- References: `scripts/gen-roadmap.sh`, `scripts/test-gen-roadmap.sh`, `docs/superpowers/specs/2026-11-24-roadmap-autogen-design.md`

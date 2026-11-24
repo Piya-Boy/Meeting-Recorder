@@ -1,0 +1,10 @@
+#!/bin/sh
+# Regenerate ROADMAP.md from TASKS.md before every commit and stage the result.
+# Enable once per clone: git config core.hooksPath .githooks
+if [ -f TASKS.md ] && [ -f ROADMAP.md ]; then
+  if ! sh scripts/gen-roadmap.sh; then
+    echo "pre-commit: ROADMAP.md generation failed; every task in TASKS.md needs a 'Milestone:' sub-bullet" >&2
+    exit 1
+  fi
+  git diff --quiet -- ROADMAP.md || git add ROADMAP.md
+fi
