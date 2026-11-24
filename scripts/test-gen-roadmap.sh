@@ -239,8 +239,7 @@ t_conflicting_milestone_names_fail() {
   assert_file_eq 'roadmap unchanged' "$D/before" "$R"
 }
 
-t_hook_stages_roadmap() {
-  mk
+hook_repo() { # sets G; first commit holds TASKS.md, ROADMAP.md and other.txt
   G="$D/repo"
   mkdir -p "$G/scripts" "$G/.githooks"
   cp "$GEN" "$G/scripts/gen-roadmap.sh"
@@ -251,9 +250,66 @@ t_hook_stages_roadmap() {
   git -C "$G" config core.autocrlf false
   git -C "$G" config core.hooksPath .githooks
   printf -- '- [ ] Task: a\n  - Milestone: M1 - A\n' > "$G/TASKS.md"
-  printf 'HEAD\n<!-- roadmap:begin -->\n<!-- roadmap:end -->\n' > "$G/ROADMAP.md"
+  printf 'HEAD\n<!-- roadmap:begin -->\n<!-- roadmap:end -->\nTAIL\n' > "$G/ROADMAP.md"
+  printf 'x\n' > "$G/other.txt"
   git -C "$G" add -A
   git -C "$G" commit -q -m first || bad 'first commit failed'
+}
+
+t_uppercase_x_is_done() {
+  mk
+  printf -- '- [X] Task: Upper\n  - Milestone: M1 - A\n' >> "$T"
+  write_roadmap
+  run_gen "$T" "$R"
+  assert_eq 'exit code' 0 "$RC"
+  assert_eq 'content' '### M1 - A (Done)
+- [x] Upper' "$(headings)"
+}
+
+t_near_miss_task_lines_fail() {
+  mk
+  for line in '- [ ] Task:NoSpace' '* [ ] Task: star bullet' '  - [ ] Task: nested child'; do
+    printf -- '- [ ] Task: real\n  - Milestone: M1 - A\n%s\n' "$line" > "$T"
+    write_roadmap
+    cp "$R" "$D/before"
+    run_gen "$T" "$R"
+    assert_eq "[$line] exit code" 2 "$RC"
+    assert_file_eq "[$line] roadmap unchanged" "$D/before" "$R"
+  done
+}
+
+t_hook_leaves_unstaged_roadmap_edits_out() {
+  mk
+  hook_repo
+  printf 'WIP\n' >> "$G/ROADMAP.md"
+  printf 'y\n' >> "$G/other.txt"
+  git -C "$G" add other.txt
+  git -C "$G" commit -q -m other || bad 'commit failed'
+  case "$(git -C "$G" show HEAD:ROADMAP.md)" in
+    *WIP*) bad 'unstaged ROADMAP.md edit was committed' ;;
+  esac
+  case "$(cat "$G/ROADMAP.md")" in
+    *WIP*) ;;
+    *) bad 'working-tree ROADMAP.md edit was lost' ;;
+  esac
+}
+
+t_hook_commits_roadmap_matching_staged_tasks() {
+  mk
+  hook_repo
+  sed 's/- \[ \] Task: a/- [x] Task: a/' "$G/TASKS.md" > "$G/t.new" && mv "$G/t.new" "$G/TASKS.md"
+  printf 'y\n' >> "$G/other.txt"
+  git -C "$G" add other.txt
+  git -C "$G" commit -q -m other || bad 'commit failed'
+  git -C "$G" show HEAD:TASKS.md > "$D/t"
+  git -C "$G" show HEAD:ROADMAP.md > "$D/r"
+  run_gen --check "$D/t" "$D/r"
+  assert_eq 'committed ROADMAP matches committed TASKS' 0 "$RC"
+}
+
+t_hook_stages_roadmap() {
+  mk
+  hook_repo
   sed 's/- \[ \] Task: a/- [x] Task: a/' "$G/TASKS.md" > "$G/t.new" && mv "$G/t.new" "$G/TASKS.md"
   git -C "$G" add TASKS.md
   git -C "$G" commit -q -m flip || bad 'flip commit failed'

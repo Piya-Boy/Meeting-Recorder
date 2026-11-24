@@ -67,13 +67,16 @@ function state(id) {
   if (done[id] == 0) return "Not Started"
   return "In Progress"
 }
-/^- \[[ x]\] Task: / {
+/^- \[[ xX]\] Task: / {
   finish_task()
-  is_done = (substr($0, 4, 1) == "x")
+  is_done = (substr($0, 4, 1) != " ")
   title = substr($0, index($0, "Task: ") + 6)
   intask = 1
   tag_seen = 0
   next
+}
+/^[ \t]*[-*+][ \t]+\[.\][ \t]*Task:/ {
+  fail("malformed task line (expected \"- [ ] Task: <title>\" at column 0): " $0)
 }
 intask && /^[ \t]+- Milestone: / {
   if (tag_seen) next

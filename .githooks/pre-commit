@@ -1,10 +1,25 @@
 #!/bin/sh
-# Regenerate ROADMAP.md from TASKS.md before every commit and stage the result.
+# Regenerate ROADMAP.md from the STAGED TASKS.md before every commit and stage the result.
+# Works on the index, so unstaged edits to TASKS.md or ROADMAP.md never leak into a commit.
 # Enable once per clone: git config core.hooksPath .githooks
-if [ -f TASKS.md ] && [ -f ROADMAP.md ]; then
-  if ! sh scripts/gen-roadmap.sh; then
-    echo "pre-commit: ROADMAP.md generation failed; every task in TASKS.md needs a 'Milestone:' sub-bullet" >&2
-    exit 1
-  fi
-  git diff --quiet -- ROADMAP.md || git add ROADMAP.md
+git ls-files --error-unmatch TASKS.md ROADMAP.md > /dev/null 2>&1 || exit 0
+
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+git show :TASKS.md > "$tmp/TASKS.md" || exit 1
+git show :ROADMAP.md > "$tmp/ROADMAP.md" || exit 1
+cp "$tmp/ROADMAP.md" "$tmp/ROADMAP.index"
+
+if ! sh scripts/gen-roadmap.sh "$tmp/TASKS.md" "$tmp/ROADMAP.md"; then
+  echo "pre-commit: ROADMAP.md generation failed (see the error above)" >&2
+  exit 1
+fi
+cmp -s "$tmp/ROADMAP.md" "$tmp/ROADMAP.index" && exit 0
+
+blob=$(git hash-object -w --path=ROADMAP.md "$tmp/ROADMAP.md") || exit 1
+git update-index --cacheinfo "100644,$blob,ROADMAP.md" || exit 1
+
+# Refresh the working file only when it has no unstaged edits.
+if tr -d '\r' < ROADMAP.md | cmp -s - "$tmp/ROADMAP.index"; then
+  cp "$tmp/ROADMAP.md" ROADMAP.md
 fi
