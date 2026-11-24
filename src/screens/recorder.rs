@@ -240,8 +240,13 @@ impl RecorderScreen {
                 self.saved_dir = Some(dir);
             }
             Event::Error(message) => {
-                if self.state.session_active() {
-                    // The worker's own State event says whether the session survives.
+                // An error while Starting always ends the start (a source that cannot open is a
+                // SourceStatus, not an Error), and a rejected start sends no State event.
+                // Once a session runs, the worker's own State event says whether it survives.
+                if matches!(
+                    self.state,
+                    RecorderState::Recording | RecorderState::Paused | RecorderState::Processing
+                ) {
                     self.notice = Some(tr(&message).to_owned());
                 } else {
                     self.state = RecorderState::Error;
@@ -1320,6 +1325,34 @@ mod tests {
             "{}",
             s.global_label()
         );
+    }
+
+    #[test]
+    fn start_with_both_sources_off_ends_in_error_not_starting() {
+        let mut s = live_screen();
+        s.sys_audio_enabled = false;
+        s.mic_enabled = false;
+        s.start();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while s.state == RecorderState::Starting && std::time::Instant::now() < deadline {
+            for e in s.take_events() {
+                s.apply_event(e);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            s.state,
+            RecorderState::Error,
+            "the worker rejects the start"
+        );
+        assert_eq!(
+            s.last_error.as_deref(),
+            Some("Turn on at least one audio source")
+        );
+        // The screen must be usable again: a new Start goes out.
+        s.sys_audio_enabled = true;
+        s.start();
+        assert_eq!(s.state, RecorderState::Starting);
     }
 
     #[test]
