@@ -1880,7 +1880,7 @@ dependencies = [
  "sha2",
  "ureq",
  "wasapi",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "winresource",
  "zip",
 ]
