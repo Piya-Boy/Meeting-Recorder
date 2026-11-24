@@ -189,3 +189,39 @@ _Add decisions below._
 - Alternatives: Ask the publisher; take legal advice; drop the badge.
 - Consequences: Do not publish an installer that includes the model, or ship the badge as final, before this is settled.
 - References: `THIRD_PARTY_NOTICES.md`, `LICENSE`
+
+### 2026-11-24 - Recordings and Transcripts scan the folders; no SQLite index yet
+
+- Status: Accepted
+- Context: The screens must show what is on disk. The session folders already hold everything (WAV headers, `transcript.json`).
+- Decision: `library::scan` reads every direct subfolder of the Recorder's destination that holds `mic.wav` or `system.wav`, on a short background thread; the newest request wins. It runs when Recordings or Transcripts is opened, after a save, after a transcription ends and after a delete. A transcript counts only if `transcript.json` is version 1.
+- Alternatives: A SQLite index (fast search over everything, but it must stay in sync with folders the user changes in Explorer and needs a repair path); scanning on the UI thread (stalls on big folders).
+- Consequences: The list never disagrees with the disk after a refresh; a folder changed in Explorer shows only when the screen is opened again. 200 sessions scan in 37 ms (debug build), so an index is not needed yet; revisit when search over thousands of transcripts is slow.
+- References: `src/library.rs`, `docs/superpowers/specs/2026-11-24-library-real-data-design.md`
+
+### 2026-11-24 - Delete removes only what the app wrote
+
+- Status: Accepted
+- Context: The destination folder belongs to the user; a delete button must not remove their other files.
+- Decision: `delete_session` removes `mic.wav`, `system.wav`, `transcript.json`, `transcript.txt` and their `.tmp` files, then removes the folder only if it is empty; it refuses any path that is not a direct child of the destination. The app refuses a delete while a recording is in progress or while that folder is being transcribed.
+- Alternatives: `remove_dir_all` (simple, would delete a user's notes in the same folder); the recycle bin (needs another Windows API; the modal already says it cannot be undone).
+- Consequences: A folder with the user's own files stays on disk, without its audio; it no longer lists because no WAV is left. Deletion is permanent.
+- References: `src/library.rs`, `src/app.rs`
+
+### 2026-11-24 - `serde_json` for reading `transcript.json`
+
+- Status: Accepted
+- Context: The library must read the transcript files the app writes; a hand-written parser for escapes and nesting is a risk for little gain.
+- Decision: Add `serde_json` 1 and read `transcript.json` through `serde_json::Value`. The writer stays hand-written.
+- Alternatives: Parse `transcript.txt` (labels depend on the UI language at the time); a hand-written JSON reader.
+- Consequences: One more dependency (`serde` and `serde_json` were already in the lock file through other crates).
+- References: `Cargo.toml`, `src/library.rs`
+
+### 2026-11-25 - Exports go next to the recording, no Save dialog
+
+- Status: Accepted
+- Context: The Export JSON / SRT / TXT buttons had no behaviour. The library already keeps everything about a recording in its own folder.
+- Decision: An export writes (or returns) the file in the recording's folder and shows it selected in Explorer (`explorer /select,"<path>"`). `transcript.json` and `transcript.txt` are the files the transcription wrote and are never overwritten; `transcript.srt` is derived and rewritten each time; the app's delete removes it.
+- Alternatives: A native Save dialog through the `rfd` crate (new dependency, and a blocking call that needs its own thread and a channel); clipboard only (already exists as Copy).
+- Consequences: No choice of destination: the user copies the file from Explorer. An existing `transcript.txt` keeps the labels of the language it was written in. Revisit with a Save dialog if users ask.
+- References: `src/export.rs`, `docs/superpowers/specs/2026-11-25-transcript-export-design.md`

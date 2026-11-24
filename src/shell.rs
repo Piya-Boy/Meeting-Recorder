@@ -313,8 +313,8 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                 recorder_status_badge(ui, state, theme);
             }
 
-            // Demo control: toggle the recordings empty state
-            if state.current_screen == Screen::Recordings {
+            // Demo control: toggle the recordings empty state (sample data only)
+            if state.current_screen == Screen::Recordings && !state.recordings.live {
                 let label = if state.recordings.show_empty {
                     tr("Show recordings list")
                 } else {
@@ -445,7 +445,11 @@ fn draw_detail_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             theme_toggle(ui, state, theme);
-            for fmt in ["JSON", "SRT", "TXT"] {
+            for (fmt, format) in [
+                ("JSON", crate::export::ExportFormat::Json),
+                ("SRT", crate::export::ExportFormat::Srt),
+                ("TXT", crate::export::ExportFormat::Txt),
+            ] {
                 let label = format!("{} {fmt}", tr("Export"));
                 let resp = ui
                     .add(
@@ -461,7 +465,12 @@ fn draw_detail_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if resp.clicked() {
-                    crate::toast::show(ui.ctx(), crate::i18n::export_not_wired(fmt));
+                    match state.transcript_detail.dir.clone() {
+                        Some(dir) if state.transcript_detail.live => {
+                            state.export_transcript(&dir, format)
+                        }
+                        _ => crate::toast::show(ui.ctx(), crate::i18n::export_not_wired(fmt)),
+                    }
                 }
             }
             let copy = ui

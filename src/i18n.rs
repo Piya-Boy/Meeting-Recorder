@@ -348,6 +348,15 @@ const THAI: &[(&str, &str)] = &[
     ("You", "คุณ"),
     ("Others", "คนอื่น"),
     ("lines", "บรรทัด"),
+    ("Loading transcripts...", "กำลังโหลดทรานสคริปต์..."),
+    ("Search transcripts or Thai text...", "ค้นหาทรานสคริปต์หรือข้อความภาษาไทย..."),
+    ("Lines", "บรรทัด"),
+    ("Could not open the transcript.", "เปิดทรานสคริปต์ไม่ได้"),
+    ("Exported. The file is in the recording's folder.", "ส่งออกแล้ว ไฟล์อยู่ในโฟลเดอร์ของการบันทึก"),
+    ("Could not export the transcript.", "ส่งออกทรานสคริปต์ไม่ได้"),
+    ("Loading recordings...", "กำลังโหลดรายการบันทึก..."),
+    ("Stop the recording before deleting.", "หยุดการบันทึกก่อนจึงจะลบได้"),
+    ("This recording is being transcribed.", "รายการบันทึกนี้กำลังถอดเสียงอยู่"),
     ("Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.", "สัญญาอนุญาตของไลบรารีและโมเดลเสียง: ไฟล์ THIRD_PARTY_NOTICES.md ในโฟลเดอร์โปรเจกต์"),
 ];
 
@@ -404,6 +413,15 @@ mod tests {
             "You",
             "Others",
             "lines",
+            "Loading transcripts...",
+            "Search transcripts or Thai text...",
+            "Lines",
+            "Could not open the transcript.",
+            "Exported. The file is in the recording's folder.",
+            "Could not export the transcript.",
+            "Loading recordings...",
+            "Stop the recording before deleting.",
+            "This recording is being transcribed.",
             "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
         ] {
             assert!(has_thai(key), "missing Thai for {key:?}");

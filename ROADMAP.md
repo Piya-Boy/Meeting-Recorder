@@ -3,7 +3,7 @@
 ## Current Milestone
 
 - Goal: Native egui UI for every Stitch screen, then connect real backends.
-- Status: M2 UI half Done; audio capture and transcription built (checked on this machine) but real-call and 2-minute-speech acceptance still open; SQLite, exports Not Started
+- Status: M2 UI half Done; audio capture and transcription built (checked on this machine) but real-call and 2-minute-speech acceptance still open; Recordings and Transcripts read real folders; exports done (written next to the recording); SQLite index Not Started
 - Exit Criteria: UI matches the design; `cargo fmt --check`, `cargo check`, `cargo clippy`, `cargo test` pass; backends wired and verified.
 
 ## Milestones
@@ -19,8 +19,8 @@
 - [x] UI: app logo, exe icon, shortcuts, keyboard focus, engine states
 - [ ] Audio capture (Windows WASAPI, dual track): built and checked on this machine, real Zoom/Teams acceptance open (see TASKS.md)
 - [ ] Transcription (OpenThai ASR on ONNX Runtime): built and checked on this machine (CER 4.7-5.3% on clips); clean-capture speech run, live transcript and the licence gate open (see TASKS.md)
-- [ ] Storage (SQLite index, WAV / transcript files)
-- [ ] Exports (TXT, SRT, JSON)
+- [ ] Storage (SQLite index, WAV / transcript files): WAV and transcript files are real and the lists read them from disk; no SQLite index (not needed yet, see DECISIONS.md)
+- [x] Exports (TXT, SRT, JSON): written next to the recording and shown in Explorer; no Save dialog
 - [x] Persist settings
 
 ### M3 - Stabilization (Not Started)
