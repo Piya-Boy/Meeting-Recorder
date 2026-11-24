@@ -8,7 +8,7 @@ _None._
 
 - [ ] Task: Audio capture acceptance on a real Zoom or Teams call (open items of the audio capture work)
   - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; with Zoom and Teams both open and idle the right one is picked (known risk: lowest PID wins).
-  - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last 5 s flush; `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
+  - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last flush (every 1 s since the preview text work, 5 s before); `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
   - Verification: record the call, then inspect both WAVs; record the result per item here.
 - [ ] Task: Transcription acceptance items that were not run, or only partly (open items of the transcription work)
   - Not run: a 2-minute Thai speech recorded through the app with a clean capture (the whole-system loopback picks up everything the PC plays, so the clip-through-speakers runs could not prove accuracy); needs a person speaking, or all other audio muted. Expected: CER near the 4.7-5.3% measured on clips.
@@ -18,7 +18,7 @@ _None._
   - Verification: do each item and record the result here.
 - [ ] Task: Live transcript follow-ups (open items of the live transcript work)
   - Not tried: a real person speaking into the microphone (the 2-minute run played recorded speech through the speakers, so only the system track had speech; the microphone read -90 dB); the model-not-installed path in the real window (unit tests only; the 1 GB model was not deleted to try it); Thai and light-theme screenshots of the "Listening..." state.
-  - Known limits: a line appears only after its segment ends (a pause of 0.5 s after 8 s of speech, 1.2 s after 2 s, or 25 s at most), so with continuous speech the first line came more than 15 s after the speech began; there are no words for a sentence that is still being spoken; a live line can differ from the final line of the same moment (the final transcript cuts and reads the whole file); a recording that starts while a transcription job is on the panel gets no live lines (its final transcript still comes).
+  - Known limits: a final line appears only after its segment ends (a pause of 0.5 s after 8 s of speech, 1.2 s after 2 s, or 25 s at most), so with continuous speech the first final line came more than 15 s after the speech began (the grey preview text, see the next entry, fills that gap); a live line can differ from the final line of the same moment (the final transcript cuts and reads the whole file); a recording that starts while a transcription job is on the panel gets no live lines (its final transcript still comes).
   - Verification: do each item and record the result here.
 - [ ] Task: Library follow-ups (open items of the real-data work)
   - Playback follow-ups: listening to one track alone (mic or system), speed and volume (the bar hides the speed chip and the volume icon for real recordings), choosing the output device (it plays through the Windows default), a Thai and a light-theme screenshot of the bar, and a listen-by-ear check of the audio quality, and what happens when you leave the Recordings screen (playback keeps going and the bar, the only controls, is not shown elsewhere; stop on leave or add a mini player). See the playback entry under Completed.
@@ -160,6 +160,17 @@ _None._
     - Not run: see the follow-ups task above.
   - Known limits: see the follow-ups task above.
   - Commit: branch `feature/live-transcript` (from `main`), not pushed, no PR.
+
+- [x] Task: Show the sentence being spoken as grey preview text (branch `feature/live-partial-text`, on top of `feature/live-transcript`; spec `docs/superpowers/specs/2026-11-25-live-partial-text-design.md`)
+  - Built: `SegmentStream::tail`, `LiveTrack::with_partial` / `take_partial_change` (every 2 s of new audio the unfinished tail of a track is read again; a change is reported, a cut withdraws it), `Event::LivePartial { dir, track, line }`, `Command::LiveStart { partial }`, and grey italic rows in the Recorder panel (one per track, in time order, replaced by the final line). The recorder now flushes the WAV header every 1 s instead of 5 s so the live run can read audio that is at most about 1 s old.
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 350 passed, 7 ignored (11 new), stable over 3 runs. Tests were written first and seen to fail (compile errors). Setting the 2 s pace to 0 made `a_partial_is_decoded_again_only_after_two_more_seconds` fail.
+  - Acceptance checks run on this machine, real exe, real model, the same recorded Thai clips played through the speakers:
+    - PASS the first grey text was on screen when the timer read 00:00:06, about 4 to 5 s after the speech began (the clip starts 1 to 2 s after the Record click); at 00:00:09 it held more words; at 00:00:18 the first segment was a final white line and the next one was grey.
+    - PASS at 58 s four final lines were on screen, the grey rows had been replaced by their final lines, and the files held equal frames (5,699,154 each) with a transcript after Stop.
+    - CPU: about 0.6 of one core on average over 50 s of recording (CPU time 4.2 s to 35.8 s), about twice the 0.3 measured without preview text. The final job after Stop took about 10 s of wall time.
+    - Not run: a person speaking into the microphone; the preview with both tracks speaking at once (two grey rows); Thai and light-theme screenshots.
+  - Known limits: the grey text changes while it is shown (words can be rewritten as more audio arrives); each re-read decodes the whole unfinished segment, so CPU grows with segment length (a segment is cut at 25 s at the latest); the grey rows do not follow the search box.
+  - Commit: branch `feature/live-partial-text`, not pushed, no PR.
 
 ## Rules
 

@@ -70,7 +70,7 @@ The Recorder screen is a UI mock: Record, Pause and Stop only change `RecorderSt
 
 ### Crash safety
 
-WAV stores the data size in its header. The writer updates the header sizes and flushes every 5 seconds and on Stop. Opening a file whose header says less than the file holds (crash) must still work: the reader or a repair helper trusts the file length. A recording that reaches the WAV size limit (about 11 hours at 48 kHz mono 16-bit) is finalized and the user is warned.
+WAV stores the data size in its header. The writer updates the header sizes and flushes every second (every 5 seconds until 2026-11-25) and on Stop. Opening a file whose header says less than the file holds (crash) must still work: the reader or a repair helper trusts the file length. A recording that reaches the WAV size limit (about 11 hours at 48 kHz mono 16-bit) is finalized and the user is warned.
 
 ### Sync
 

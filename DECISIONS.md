@@ -106,7 +106,7 @@ _Add decisions below._
 - Context: The two tracks must stay aligned, survive Pause and device gaps, and stay readable after a crash.
 - Decision: Each track places chunks by device timestamp and pads gaps with silence when they exceed 10 ms (rate / 100); Pause pads both tracks to the same length then discards audio; Resume rebases both clocks on the first chunk; the WAV header is rewritten every 5 s of recorded audio; Stop pads to the longest track. Files are mono 16-bit PCM at the Settings rate, one per source, in `<destination>\<YYYY-MM-DD_HHMM>_<name>\`; a source that fails or is off leaves no file.
 - Alternatives: One stereo file (the tracks could not be separated or transcribed apart); rewriting the header only on Stop (a crash would leave unplayable files).
-- Consequences: After a crash a header lists audio only up to the last flush (measured: 5.01 s of 6.99 s); `recover_header` can repair this but is not wired in yet.
+- Consequences: After a crash a header lists audio only up to the last flush (measured: 5.01 s of 6.99 s when the flush was every 5 s; it is every 1 s since 2026-11-25); `recover_header` can repair this but is not wired in yet.
 - References: `src/audio/clock.rs`, `src/audio/wav.rs`, `src/audio/worker.rs`
 
 ### 2026-11-24 - Levels computed in the worker
@@ -249,6 +249,15 @@ _Add decisions below._
 - Status: Accepted
 - Context: Live lines are cut while the recording is still going and cannot see what comes after them; the final job reads each whole file.
 - Decision: Live lines are shown in the Recorder panel only and are replaced by the final transcript when it arrives (they stay on screen while the final job runs). Only the final transcript is saved. "Partial transcription" off means no live run and no CPU spent; "Streaming chunk window" (500, 1,000 or 2,000 ms) is how often new audio is read, not a decoding window. The settings note that promised live transcription "later" was replaced by one that says the lines are a preview.
-- Alternatives: Saving the live lines as the transcript (cheaper, but the lines are cut with less context and a crash would leave a half file); showing words of an unfinished sentence (the model cannot give them).
+- Alternatives: Saving the live lines as the transcript (cheaper, but the lines are cut with less context and a crash would leave a half file); showing words of an unfinished sentence (the model cannot give them as it goes; see the preview-text decision below, which re-reads the tail instead).
 - Consequences: Live and final text can differ a little (seen in the acceptance run). Nothing in the library or exports changes.
 - References: `src/screens/recorder.rs`, `src/app.rs`
+
+### 2026-11-25 - Preview text: re-read the unfinished tail every 2 s; the header flush is now 1 s
+
+- Status: Accepted
+- Context: A final line waits for the end of its segment (a pause, or 25 s), so with continuous speech the first line came after more than 15 s. The model reads a whole segment and keeps no streaming state, so it cannot give words one at a time. The recorder flushed the WAV header (and so made audio readable) every 5 s.
+- Decision: With "Partial transcription" on, every 2 s of new audio the live run decodes the whole unfinished tail of each track again (its loud part only) and shows the text in grey italics, one row per track. When the tail is cut into a final line the preview is withdrawn and the final line shown. A silent tail is not decoded, and unchanged text is not reported again. The recorder flushes the header every 1 s (`HEADER_FLUSH_SECS`).
+- Alternatives: Cutting segments every 3 s (words are cut in two and read worse); the model's streaming mode (needs a different ONNX export and its state); keeping the 5 s flush (adds up to 5 s to every preview).
+- Consequences: The first grey words appeared about 4 to 5 s after the speech began. CPU about doubled while recording (about 0.6 of one core, from 0.3), and grows with the length of the unfinished segment. A crash now loses at most about 1 s of audio from the headers instead of 5 s. The header is rewritten once a second.
+- References: `src/asr/live.rs`, `src/audio/worker.rs`, `docs/superpowers/specs/2026-11-25-live-partial-text-design.md`

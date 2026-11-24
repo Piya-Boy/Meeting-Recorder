@@ -118,3 +118,9 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Recorder transcript panel: while a recording runs with the model installed and "Partial transcription" on, the panel says "Listening..." and then shows lines in time order (time, "You" or "Others", text); the final transcript replaces them after Stop. With the setting off the panel keeps its old text until Stop.
 - Settings > Transcription: "Partial transcription" now reads "Show transcript lines while recording. Each line appears after a pause." and "Streaming chunk window" reads "How often new audio is read for the live lines."; the note under them now says "Live lines are a preview. The final transcript is made after you stop and may differ a little." New strings (English and Thai): "Listening...", "Live transcript stopped." and the three above.
 - Checked with screenshots of the real exe in English: "Listening...", lines at 59 s and at 2:01, the final transcript after Stop, the setting off. Not screenshotted: Thai, light theme.
+
+## Preview text while recording (2026-11-25)
+
+- Recorder transcript panel: the sentence being spoken shows as grey italic text (with its time and the "You" / "Others" badge) below the final lines, one row per track, and is replaced by the final white line when its segment ends. "Listening..." shows only until the first text.
+- Settings > Transcription: "Partial transcription" now reads "Show transcript text while recording. Grey text may still change; a line is final after a pause." (English and Thai).
+- Checked with screenshots of the real exe in English: the first grey text at 00:00:06, more words at 00:00:09, a final line plus a new grey row at 00:00:18, four final lines at 00:00:58. Not screenshotted: two tracks speaking at once, Thai, light theme.

@@ -22,7 +22,7 @@
 - [ ] Storage (SQLite index, WAV / transcript files): WAV and transcript files are real and the lists read them from disk; no SQLite index (not needed yet, see DECISIONS.md)
 - [x] Exports (TXT, SRT, JSON): written next to the recording and shown in Explorer; no Save dialog
 - [x] Playback of recordings (both tracks mixed, play / pause / seek, WASAPI default device): checked on this machine with the real exe and a loopback test; no speed, volume or device choice
-- [x] Live transcript while recording (lines appear after each pause and the final transcript replaces them after Stop): checked on this machine with the real exe and model; no words for an unfinished sentence, a person speaking into the microphone not tried
+- [x] Live transcript while recording (grey preview text a few seconds behind the speech, a final line after each pause, and the final transcript replaces them after Stop): checked on this machine with the real exe and model; a person speaking into the microphone not tried
 - [x] Persist settings
 
 ### M3 - Stabilization (Not Started)
