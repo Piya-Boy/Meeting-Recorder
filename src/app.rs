@@ -1,3 +1,5 @@
+use crate::audio::session::{Command, Event};
+use crate::audio::worker::AudioHandle;
 use crate::i18n::tr;
 use egui::Ui;
 
@@ -7,7 +9,7 @@ use crate::screens::{
     settings::{
         advanced::{draw_settings_advanced, SettingsAdvancedScreen},
         appearance::{draw_settings_appearance, SettingsAppearanceScreen},
-        audio::{draw_settings_audio, SettingsAudioScreen},
+        audio::{draw_settings_audio, AudioChoice, SettingsAudioScreen},
         category_rail as draw_settings_category_rail,
         general::{draw_settings_general, SettingsGeneralScreen},
         storage::{draw_settings_storage, SettingsStorageScreen},
@@ -122,6 +124,8 @@ pub struct AppState {
     pub settings_storage: SettingsStorageScreen,
     pub settings_appearance: SettingsAppearanceScreen,
     pub settings_advanced: SettingsAdvancedScreen,
+    /// Devices Windows reports and the ones picked (Recorder and Settings > Audio share it).
+    pub audio_choice: AudioChoice,
 
     /// Whether preference changes are written to disk (off for dev-flag runs and tests).
     persist: bool,
@@ -147,6 +151,7 @@ impl Default for AppState {
             settings_storage: SettingsStorageScreen::default(),
             settings_appearance: SettingsAppearanceScreen::default(),
             settings_advanced: SettingsAdvancedScreen::default(),
+            audio_choice: AudioChoice::default(),
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
@@ -168,9 +173,11 @@ impl AppState {
             } else if let Some(name) = arg.strip_prefix("--state=") {
                 use crate::screens::recorder::RecorderState;
                 state.recorder.state = match name {
+                    "starting" => RecorderState::Starting,
                     "recording" => RecorderState::Recording,
                     "paused" => RecorderState::Paused,
                     "processing" => RecorderState::Processing,
+                    "saved" => RecorderState::Saved,
                     "error" => RecorderState::Error,
                     _ => RecorderState::Idle,
                 };
@@ -222,6 +229,8 @@ impl AppState {
         self.settings_general.start_with_windows = saved.start_with_windows;
         self.settings_general.minimize_to_tray = saved.minimize_to_tray;
         self.settings_general.confirm_delete = saved.confirm_delete;
+        self.audio_choice.system_id = saved.system_device;
+        self.audio_choice.mic_id = saved.mic_device;
         self.saved = self.snapshot();
         self.persist = true;
     }
@@ -235,6 +244,42 @@ impl AppState {
             start_with_windows: self.settings_general.start_with_windows,
             minimize_to_tray: self.settings_general.minimize_to_tray,
             confirm_delete: self.settings_general.confirm_delete,
+            system_device: self.audio_choice.system_id.clone(),
+            mic_device: self.audio_choice.mic_id.clone(),
+        }
+    }
+
+    /// Connects the capture worker and asks it for the device lists.
+    pub fn enable_audio(&mut self, handle: AudioHandle) {
+        handle.send(Command::ListDevices);
+        self.recorder.audio = Some(handle);
+        // The mock folder belongs to someone else's profile; record under this user's.
+        if self.recorder.destination == crate::screens::recorder::MOCK_DESTINATION {
+            if let Some(home) = std::env::var_os("USERPROFILE") {
+                self.recorder.destination = std::path::PathBuf::from(home)
+                    .join("Documents")
+                    .join("MeetingRecorder")
+                    .join("Recordings")
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+    }
+
+    /// Hands the capture settings to the Recorder (it reads them when Start is pressed).
+    fn sync_audio_settings(&mut self) {
+        self.recorder.sync_capture(
+            crate::screens::settings::audio::sample_rate_hz(self.settings_audio.sample_rate_idx),
+            self.audio_choice.system_device(),
+            self.audio_choice.mic_device(),
+        );
+    }
+
+    /// Applies one report from the capture worker.
+    pub fn apply_audio_event(&mut self, event: Event) {
+        match event {
+            Event::Devices { system, mic } => self.audio_choice.apply_devices(system, mic),
+            other => self.recorder.apply_event(other),
         }
     }
 
@@ -315,6 +360,27 @@ impl eframe::App for AppState {
         crate::i18n::set_lang(crate::i18n::lang_from_index(
             self.settings_general.language_idx,
         ));
+        self.sync_audio_settings();
+        for event in self.recorder.take_events() {
+            self.apply_audio_event(event);
+        }
+        if let Some(notice) = self.recorder.take_notice() {
+            crate::toast::show(ctx, notice);
+        }
+        if self.recorder.audio.is_some()
+            && !matches!(
+                self.recorder.state,
+                crate::screens::recorder::RecorderState::Idle
+                    | crate::screens::recorder::RecorderState::Saved
+                    | crate::screens::recorder::RecorderState::Error
+            )
+        {
+            // Worker events do not wake egui by themselves.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        if self.recorder.audio.is_some() && !self.audio_choice.devices_loaded {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let now = ctx.input(|i| i.time);
         if self.recorder.tick_engine(now) {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -402,7 +468,7 @@ impl eframe::App for AppState {
 fn draw_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
     match state.current_screen {
         Screen::Recorder => {
-            draw_recorder_screen(ui, theme, &mut state.recorder);
+            draw_recorder_screen(ui, theme, &mut state.recorder, &mut state.audio_choice);
         }
         Screen::Recordings => {
             if let Some(target) =
@@ -437,7 +503,12 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
 
     match state.current_screen {
         Screen::SettingsGeneral => draw_settings_general(ui, &mut state.settings_general, theme),
-        Screen::SettingsAudio => draw_settings_audio(ui, &mut state.settings_audio, theme),
+        Screen::SettingsAudio => draw_settings_audio(
+            ui,
+            &mut state.settings_audio,
+            &mut state.audio_choice,
+            theme,
+        ),
         Screen::SettingsTranscription => {
             draw_settings_transcription(ui, &mut state.settings_transcription, theme)
         }
@@ -510,5 +581,84 @@ mod tests {
         assert!(Screen::SettingsStorage.is_settings());
         assert!(!Screen::Transcripts.is_settings());
         assert!(!Screen::TranscriptDetail.is_settings());
+    }
+
+    #[test]
+    fn devices_event_fills_lists() {
+        use crate::audio::session::{DeviceInfo, Event};
+        let dev = |id: &str| DeviceInfo {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            is_default: false,
+        };
+        let mut state = AppState::default();
+        state.audio_choice.mic_id = "gone".to_owned();
+        assert!(!state.audio_choice.devices_loaded);
+        state.apply_audio_event(Event::Devices {
+            system: vec![dev("s1")],
+            mic: vec![dev("m1")],
+        });
+        assert!(state.audio_choice.devices_loaded);
+        assert_eq!(state.audio_choice.system.len(), 1);
+        assert_eq!(
+            state.audio_choice.mic_index(),
+            0,
+            "unknown id shows Windows default"
+        );
+        assert_eq!(
+            state.audio_choice.mic_id, "gone",
+            "stored id is not overwritten"
+        );
+    }
+
+    #[test]
+    fn device_choice_is_part_of_the_saved_snapshot() {
+        let mut state = AppState::default();
+        state.enable_persistence(Persisted {
+            system_device: "s".to_owned(),
+            mic_device: "m".to_owned(),
+            ..Persisted::default()
+        });
+        assert_eq!(state.audio_choice.system_id, "s");
+        assert_eq!(state.snapshot().mic_device, "m");
+    }
+
+    /// Applies worker events until `done` holds (max 5 s).
+    fn pump(state: &mut AppState, done: impl Fn(&AppState) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(state) {
+            for e in state.recorder.take_events() {
+                state.apply_audio_event(e);
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out; state {:?}",
+                state.recorder.state
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn stop_shortcut_in_session_sends_stop_command() {
+        use crate::audio::backend::FakeBackend;
+        use crate::audio::worker::{AudioHandle, WorkerConfig};
+        use crate::screens::recorder::RecorderState;
+        let dir = crate::audio::temp_dir("app-session");
+        let mut state = AppState::default();
+        state.recorder.destination = dir.to_string_lossy().into_owned();
+        state.recorder.file_name = "shortcut".to_owned();
+        state.enable_audio(AudioHandle::spawn(
+            std::sync::Arc::new(FakeBackend::new()),
+            WorkerConfig::default(),
+        ));
+        // Ctrl+Shift+R starts ...
+        state.recorder.toggle_recording();
+        pump(&mut state, |s| s.recorder.state == RecorderState::Recording);
+        // ... and the same shortcut stops: the worker finalizes and reports Saved.
+        state.recorder.toggle_recording();
+        pump(&mut state, |s| s.recorder.state == RecorderState::Saved);
+        let saved = state.recorder.saved_dir.clone().expect("saved folder");
+        assert!(saved.join("system.wav").is_file() && saved.join("mic.wav").is_file());
     }
 }

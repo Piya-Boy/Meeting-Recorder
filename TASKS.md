@@ -6,8 +6,12 @@ _None._
 
 ## Next
 
-- [ ] Task: Wire the UI to real backends (WASAPI capture, OpenThai ASR / ONNX, SQLite)
-  - Acceptance Criteria: Record / Pause / Stop produce dual-track WAV; live transcript from ASR; recordings and transcripts read from SQLite instead of mock data; UI talks to workers through channels.
+- [ ] Task: Audio capture acceptance on a real Zoom or Teams call (open items of the audio capture work)
+  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; with Zoom and Teams both open and idle the right one is picked (known risk: lowest PID wins).
+  - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last 5 s flush; `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
+  - Verification: record the call, then inspect both WAVs; record the result per item here.
+- [ ] Task: Wire the UI to the remaining real backends (OpenThai ASR / ONNX, SQLite)
+  - Acceptance Criteria: live transcript from ASR; recordings and transcripts read from SQLite instead of mock data.
   - Verification: Record a short session, reopen the app, find it in Recordings and Transcripts; `cargo test` covers the storage layer.
 - [ ] Task: Keyboard navigation inside tables and dropdown popups
   - Acceptance Criteria: Arrow keys / Enter work in rows and popups; focus ring visible.
@@ -55,6 +59,20 @@ _None._
 - [x] Task: Embed the `.exe` icon (`build.rs`, `assets/icon/app.ico`)
   - Verification Evidence: icon extracted from the built exe shows the logo; version info shows the product name.
   - Commit: not committed.
+
+- [x] Task: Audio capture engine and Recorder wiring (branch `feature/audio-capture`; spec `docs/superpowers/specs/2026-11-24-audio-capture-design.md`)
+  - Built: session worker thread behind a `Backend` trait, WASAPI backend (microphone, whole-system loopback, per-process loopback of Zoom/Teams with whole-system fallback), WAV writer with periodic header flush, per-source clocks that pad gaps and rebase after Pause, real device lists, device choice saved by ID, Recorder screen driven by worker events (new Starting and Saved states, source status badges, timer from the worker, real error text).
+  - Verification Evidence: `cargo fmt --check`, `cargo clippy --all-targets` clean; `cargo test` 105 passed, 4 ignored. The 4 ignored tests need audio hardware and passed here with `cargo test audio::wasapi_backend -- --ignored --test-threads=1` (microphone capture, whole-system loopback open, process-loopback open; Windows 11 build 26300).
+  - Acceptance checks run on this machine, real exe, mouse clicks on Record / Pause / Resume / Stop, no Zoom or Teams running (so the system track was the whole-system fallback):
+    - PASS both WAVs are valid mono 16-bit 48 kHz PCM files (parsed with Python `wave`; not listened to). A 4.41 s run gave 211752 frames in each file.
+    - PASS track lengths: identical (0 ms) after Stop in the two stopped runs.
+    - PASS a 3 s Pause is absent: 3 s record + 3 s pause + 3 s record gave 6.67 s in both files (the extra 0.67 s is the click delays); the timer held at 00:00:03 while paused.
+    - PASS starting without Zoom or Teams shows the fallback badge (shown as "Capturing all system audio" in the first run, renamed "All system audio" afterwards and seen again on the Paused screenshot).
+    - PARTIAL kill mid-recording: after killing the app at about 7 s both files open, but the headers say 5.01 s (last flush) while the data holds 6.99 s; the track lengths differ by 5 frames. Full length needs `recover_header`, which is not wired (see open task).
+    - PASS closing the window during a recording finalizes: after 7 s both files had full headers (336784 frames each, equal) because the worker finalizes when the app drops it.
+    - PASS the UI did not stall in any of the 5 recording runs (observed, not measured).
+  - Not verified: capturing a real Zoom/Teams call, participant separation between tracks, quit/reopen of the meeting app, microphone unplug, process-loopback timestamps from a live process. These are the open task above; the roadmap item stays unticked.
+  - Commit: branch `feature/audio-capture`, not pushed, no PR.
 
 ## Rules
 

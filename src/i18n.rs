@@ -51,6 +51,12 @@ pub fn tr(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// Whether `s` has a Thai entry (for tests that must not touch the global language).
+#[cfg(test)]
+pub fn has_thai(s: &str) -> bool {
+    THAI.iter().any(|(k, _)| *k == s)
+}
+
 /// Toast text for an action whose backend is not connected yet.
 pub fn not_wired(what: &str) -> String {
     match lang() {
@@ -256,6 +262,21 @@ const THAI: &[(&str, &str)] = &[
     ("Words", "จำนวนคำ"),
     ("Today", "วันนี้"),
     ("WASAPI active", "WASAPI ทำงานอยู่"),
+    ("Windows default", "ค่าเริ่มต้นของ Windows"),
+    ("Starting", "กำลังเริ่ม"),
+    ("Saved", "บันทึกแล้ว"),
+    ("Resume", "ต่อ"),
+    ("Ready", "พร้อม"),
+    ("Off", "ปิด"),
+    ("All system audio", "เสียงทั้งระบบ"),
+    ("Waiting for the meeting app", "รอแอปประชุม"),
+    ("Device lost", "อุปกรณ์หลุด"),
+    ("Could not start", "เริ่มไม่ได้"),
+    ("Recording problem", "การบันทึกมีปัญหา"),
+    ("Recording saved to", "บันทึกไฟล์แล้วที่"),
+    ("Turn on at least one audio source", "เปิดแหล่งเสียงอย่างน้อยหนึ่งแหล่ง"),
+    ("No audio source could be started", "เริ่มแหล่งเสียงไม่ได้สักแหล่ง"),
+    ("A recording is already running", "กำลังบันทึกอยู่แล้ว"),
     ("WASAPI device disconnected", "อุปกรณ์ WASAPI หลุดการเชื่อมต่อ"),
     ("ASR Engine", "เอนจินถอดเสียง"),
     ("ASR engine", "เอนจินถอดเสียง"),
@@ -313,6 +334,7 @@ mod tests {
             "Speakers (Realtek(R) Audio)"
         );
         assert!(not_wired("Checksum verification").contains("ยังไม่เชื่อมต่อ"));
+        assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);
     }

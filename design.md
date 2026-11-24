@@ -571,7 +571,8 @@ Status as of 2026-11-24 (details: `UI_PROGRESS.md`, `TASKS.md`, `DECISIONS.md`).
 - Keyboard focus ring after Tab; Space / Enter activate the focused control.
 - Transcription engine states (loading / ready / unavailable) on the Recorder and in Settings > Transcription.
 - Layouts checked at 1200x760, 1280x800 and maximised, in English and Thai.
-- `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test` (19 tests) pass.
+- Audio capture (details: `docs/superpowers/specs/2026-11-24-audio-capture-design.md`): the Recorder starts, pauses, resumes and stops a real session and writes `system.wav` and `mic.wav` (mono 16-bit PCM) into `<destination>\<YYYY-MM-DD_HHMM>_<name>\`. Device lists come from Windows; the chosen devices are saved by ID and shared by Settings > Audio and the Recorder. New states: Starting (button pressed, session not up yet) and Saved (files closed; the folder path is shown and a toast names it); Stopping and Finalizing show as Processing. Each source shows a status: Ready, Connected, "All system audio" (no Zoom/Teams found, whole-system fallback), "Waiting for the meeting app", "Device lost", "Could not start", Off. Error text on the banner is the worker's message. Dev runs without `--audio` keep the old mock behavior.
+- `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test` (105 tests, 4 more need hardware) pass.
 
 ### Intentional deviations from this document
 - **Icons:** Phosphor (`egui-phosphor`) instead of Lucide (section 10).
@@ -582,7 +583,8 @@ Status as of 2026-11-24 (details: `UI_PROGRESS.md`, `TASKS.md`, `DECISIONS.md`).
 - **Timer:** 28px compact timer below ~290px panel width (the spec's `display_timer_compact`).
 
 ### Not done (needs a backend, outside the UI migration scope)
-- Real audio capture (WASAPI), ASR (OpenThai / ONNX Runtime), SQLite storage, real exports; recordings, transcripts, devices and engine status are mock data.
-- Channel-based UI / backend separation (7.5): there is no worker yet to talk to.
+- ASR (OpenThai / ONNX Runtime), SQLite storage, real exports; recordings, transcripts and engine status are mock data.
+- Audio capture is not accepted yet on a real Zoom/Teams call: participant separation, meeting-app restart, microphone unplug and the idle-app PID rule are unverified (`TASKS.md`). After a crash the WAV headers cover only the audio up to the last 5 s flush; `recover_header` is not wired in. Settings > Audio and the Recorder keep separate on/off toggles for each source, and Settings > Storage folders do not feed the Recorder yet (it records under `%USERPROFILE%\Documents\MeetingRecorder\Recordings`).
+- Channel-based UI / backend separation (7.5): done for audio capture only (worker thread, command and event channels); ASR and storage have no worker yet.
 - Keyboard navigation inside tables and dropdown popups was not separately verified (Tab order and focus ring on buttons, toggles, nav items were).
 - Reduced-motion preference: the UI has no animation beyond egui defaults.
