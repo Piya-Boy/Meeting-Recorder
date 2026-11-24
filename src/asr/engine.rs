@@ -3,8 +3,9 @@
 //! A FastConformer encoder reads a whole segment at once, then a greedy RNN-T decoder emits
 //! the pieces. Ported from PoodPim `src/asr.rs` (commit 15e07cc, MIT, Copyright (c) 2026
 //! Thirawat Sutalungka, https://github.com/thirawat/PoodPim; see THIRD_PARTY_NOTICES.md):
-//! tensor names, the Thai prompt, the blank bias and the pause-to-space rule. Beam search,
-//! hotwords, the mixed Thai-English prompt and the int8 decoder are not ported.
+//! tensor names, the language prompts, the blank bias and the pause-to-space rule. Beam
+//! search, hotwords and the int8 decoder are not ported (a Python trial of beam search and
+//! hotwords on a real recording did not pay off: `DECISIONS.md`).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,13 +18,61 @@ use crate::asr::features::{log_mel, N_MELS, SAMPLE_RATE};
 use crate::asr::segment::{quiet_frames, QUIET_FRAME_MS};
 use crate::asr::thai;
 
+/// How the model writes: Thai letters only, or English words in Latin letters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Language {
+    #[default]
+    Thai,
+    ThaiEnglish,
+}
+
+impl Language {
+    /// In the order of the Settings select.
+    pub const ALL: [Language; 2] = [Language::Thai, Language::ThaiEnglish];
+
+    /// The model's `prompt_index` input (from the model card: 32 Thai, 63 Thai mixed with English).
+    pub fn prompt_index(self) -> i64 {
+        match self {
+            Language::Thai => 32,
+            Language::ThaiEnglish => 63,
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Language::ALL.iter().position(|l| *l == self).unwrap_or(0)
+    }
+
+    /// The language at `index` in the select; an unknown index is Thai.
+    pub fn from_index(index: usize) -> Language {
+        Language::ALL.get(index).copied().unwrap_or_default()
+    }
+
+    /// The name stored in the settings file.
+    pub fn code(self) -> &'static str {
+        match self {
+            Language::Thai => "th",
+            Language::ThaiEnglish => "th-en",
+        }
+    }
+
+    /// An unknown name is Thai.
+    pub fn from_code(code: &str) -> Language {
+        Language::ALL
+            .into_iter()
+            .find(|l| l.code() == code)
+            .unwrap_or_default()
+    }
+}
+
 /// Turns a segment of 16 kHz mono audio into text.
 pub trait Recognizer: Send {
     /// The text said in `samples_16k`, normalized; empty when nothing was said.
     fn recognize(&mut self, samples_16k: &[f32]) -> Result<String, String>;
+
+    /// The language the next segments are written in (Thai until set).
+    fn set_language(&mut self, _language: Language) {}
 }
 
-const PROMPT_THAI: i64 = 32;
 const ENC_DIM: usize = 1024;
 const STATE_LEN: usize = 2 * 640; // [2, 1, 640]
 const MAX_SYMBOLS_PER_FRAME: usize = 10;
@@ -182,6 +231,7 @@ pub struct OrtRecognizer {
     decoder: Session,
     tokens: Vec<String>,
     blank: usize,
+    prompt: i64,
 }
 
 impl OrtRecognizer {
@@ -223,6 +273,7 @@ impl OrtRecognizer {
             decoder,
             tokens,
             blank,
+            prompt: Language::Thai.prompt_index(),
         })
     }
 
@@ -231,7 +282,7 @@ impl OrtRecognizer {
         let enc_out = self.encoder.run(ort::inputs![
             "audio_signal" => Tensor::from_array(([1usize, N_MELS, t], feats))?,
             "length" => Tensor::from_array(([1usize], vec![t as i64]))?,
-            "prompt_index" => Tensor::from_array(([1usize], vec![PROMPT_THAI]))?,
+            "prompt_index" => Tensor::from_array(([1usize], vec![self.prompt]))?,
         ])?;
         let (shape, data) = enc_out["encoded"].try_extract_tensor::<f32>()?;
         let (_, enc_len) = enc_out["encoded_length"].try_extract_tensor::<i64>()?;
@@ -296,6 +347,10 @@ impl Recognizer for OrtRecognizer {
             return Ok(String::new());
         }
         self.run(samples_16k).map_err(|e| e.to_string())
+    }
+
+    fn set_language(&mut self, language: Language) {
+        self.prompt = language.prompt_index();
     }
 }
 
@@ -481,5 +536,19 @@ mod tests {
         let text = rec.recognize(&audio).unwrap();
         println!("{text}");
         assert!(text.chars().any(|c| ('\u{0E01}'..='\u{0E5B}').contains(&c)));
+    }
+
+    #[test]
+    fn each_language_has_the_model_prompt_and_a_settings_index() {
+        assert_eq!(Language::Thai.prompt_index(), 32);
+        assert_eq!(Language::ThaiEnglish.prompt_index(), 63);
+        assert_eq!(Language::default(), Language::Thai);
+        for (i, l) in Language::ALL.iter().enumerate() {
+            assert_eq!(Language::from_index(i), *l);
+            assert_eq!(l.index(), i);
+            assert_eq!(Language::from_code(l.code()), *l);
+        }
+        assert_eq!(Language::from_index(9), Language::Thai);
+        assert_eq!(Language::from_code("??"), Language::Thai);
     }
 }

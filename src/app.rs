@@ -283,6 +283,9 @@ impl AppState {
         self.audio_choice.mic_id = saved.mic_device;
         self.settings_transcription.precision = Precision::from_str_lossy(&saved.asr_precision);
         self.settings_transcription.threads_idx = threads_index(saved.asr_threads);
+        self.settings_transcription.language_idx =
+            crate::asr::engine::Language::from_code(&saved.asr_language).index();
+        self.settings_transcription.glossary_text = saved.asr_glossary.join("\n");
         self.saved = self.snapshot();
         self.persist = true;
     }
@@ -300,6 +303,15 @@ impl AppState {
             mic_device: self.audio_choice.mic_id.clone(),
             asr_precision: self.settings_transcription.precision.as_str().to_owned(),
             asr_threads: self.settings_transcription.threads() as u32,
+            asr_language: self.settings_transcription.language().code().to_owned(),
+            asr_glossary: self
+                .settings_transcription
+                .glossary_text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect(),
         }
     }
 
@@ -416,6 +428,7 @@ impl AppState {
             threads: t.threads(),
             poll_ms: crate::screens::settings::transcription::chunk_window_ms(t.chunk_window_idx),
             partial: true,
+            text: t.text_options(),
         });
         self.live_dir = Some(dir);
     }
@@ -449,6 +462,7 @@ impl AppState {
                 dir: dir.clone(),
                 precision: self.settings_transcription.precision,
                 threads: self.settings_transcription.threads(),
+                text: self.settings_transcription.text_options(),
             });
         }
         self.recorder.asr_started(dir);
@@ -2257,5 +2271,47 @@ mod tests {
         assert!(a.recorder.live_partials().is_empty());
         drop(a);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn word_fixes_reach_the_final_transcript() {
+        use crate::screens::recorder::AsrJob;
+        let base = crate::audio::temp_dir("app-fixes");
+        let dir = session_dir(&base, "rec1");
+        let mut a = ready_app(&base);
+        a.settings_transcription.glossary_text = "hi = สวัสดี".to_owned();
+        a.apply_audio_event(saved(&dir));
+        wait_until(&mut a, "job done", |a| a.recorder.asr_job == AsrJob::Done);
+        assert!(a
+            .recorder
+            .transcript_segments
+            .iter()
+            .all(|s| s.text == "สวัสดี"));
+        drop(a);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn language_and_word_fixes_are_saved_and_restored() {
+        use crate::asr::engine::Language;
+        let mut a = AppState::default();
+        a.enable_persistence(Persisted {
+            asr_language: "th-en".to_owned(),
+            asr_glossary: vec!["มอล = มอก.".to_owned(), "หมอก = มอก.".to_owned()],
+            ..Persisted::default()
+        });
+        assert_eq!(a.settings_transcription.language(), Language::ThaiEnglish);
+        assert_eq!(
+            a.settings_transcription.glossary_text,
+            "มอล = มอก.\nหมอก = มอก."
+        );
+        a.settings_transcription.glossary_text = "มอล = มอก.\n\n  \nx = y\n".to_owned();
+        let p = a.snapshot();
+        assert_eq!(p.asr_language, "th-en");
+        assert_eq!(
+            p.asr_glossary,
+            vec!["มอล = มอก.", "x = y"],
+            "blank lines are not kept"
+        );
     }
 }

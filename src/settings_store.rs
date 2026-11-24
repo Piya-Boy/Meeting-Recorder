@@ -24,6 +24,10 @@ pub struct Persisted {
     pub asr_precision: String,
     /// ONNX Runtime threads for transcription: 4, 6 or 8.
     pub asr_threads: u32,
+    /// How the model writes: `th` (Thai letters) or `th-en` (English words in Latin letters).
+    pub asr_language: String,
+    /// Word fixes, one rule a line (see `asr::glossary`).
+    pub asr_glossary: Vec<String>,
 }
 
 impl Default for Persisted {
@@ -40,6 +44,8 @@ impl Default for Persisted {
             mic_device: String::new(),
             asr_precision: "int8".to_owned(),
             asr_threads: 4,
+            asr_language: "th".to_owned(),
+            asr_glossary: Vec::new(),
         }
     }
 }
@@ -54,7 +60,7 @@ fn theme_name(mode: ThemeMode) -> &'static str {
 
 impl Persisted {
     pub fn to_text(&self) -> String {
-        format!(
+        let mut text = format!(
             "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nstart_with_windows={}\nminimize_to_tray={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\nasr.precision={}\nasr.threads={}\n",
             theme_name(self.theme_mode),
             self.accent_idx,
@@ -67,7 +73,12 @@ impl Persisted {
             self.mic_device,
             self.asr_precision,
             self.asr_threads,
-        )
+        );
+        text.push_str(&format!("asr.language={}\n", self.asr_language));
+        for rule in &self.asr_glossary {
+            text.push_str(&format!("asr.glossary={rule}\n"));
+        }
+        text
     }
 
     /// Parses stored text on top of the defaults; bad values keep the default.
@@ -96,6 +107,16 @@ impl Persisted {
                 "asr.precision" => {
                     if matches!(value, "int8" | "fp32") {
                         out.asr_precision = value.to_owned();
+                    }
+                }
+                "asr.language" => {
+                    if matches!(value, "th" | "th-en") {
+                        out.asr_language = value.to_owned();
+                    }
+                }
+                "asr.glossary" => {
+                    if !value.is_empty() {
+                        out.asr_glossary.push(value.to_owned());
                     }
                 }
                 "asr.threads" => {
@@ -180,6 +201,8 @@ mod tests {
             mic_device: String::new(),
             asr_precision: "int8".to_owned(),
             asr_threads: 6,
+            asr_language: "th".to_owned(),
+            asr_glossary: Vec::new(),
         };
         assert_eq!(Persisted::from_text(&s.to_text()), s);
     }
@@ -246,5 +269,25 @@ mod tests {
             "theme=purple\naccent=99\nlanguage=-1\nnoise\n=\nconfirm_delete=maybe\nfuture_key=1",
         );
         assert_eq!(s, Persisted::default());
+    }
+
+    #[test]
+    fn language_and_word_fixes_round_trip() {
+        let s = Persisted {
+            asr_language: "th-en".to_owned(),
+            asr_glossary: vec!["มอล, หมอก = มอก.".to_owned(), "a = b = c".to_owned()],
+            ..Persisted::default()
+        };
+        let text = s.to_text();
+        assert!(text.contains("asr.language=th-en\n"), "{text}");
+        assert!(text.contains("asr.glossary=มอล, หมอก = มอก.\n"), "{text}");
+        assert_eq!(Persisted::from_text(&text), s);
+    }
+
+    #[test]
+    fn missing_or_bad_language_is_thai_and_no_word_fixes() {
+        let s = Persisted::from_text("theme=light\nasr.language=xx\n");
+        assert_eq!(s.asr_language, "th");
+        assert!(s.asr_glossary.is_empty());
     }
 }

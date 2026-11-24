@@ -17,7 +17,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::asr::download;
-use crate::asr::engine::{OrtRecognizer, Recognizer};
+use crate::asr::engine::{Language, OrtRecognizer, Recognizer};
+use crate::asr::glossary::Glossary;
 use crate::asr::live::LiveTrack;
 use crate::asr::model::{self, ModelStatus, Precision};
 use crate::asr::segment::segment_file;
@@ -46,6 +47,7 @@ pub enum Command {
         dir: PathBuf,
         precision: Precision,
         threads: usize,
+        text: TextOptions,
     },
     /// Stops the running transcription (not the ones waiting).
     CancelTranscribe,
@@ -62,6 +64,7 @@ pub enum Command {
         poll_ms: u64,
         /// Also report the segment that is still being spoken (`Event::LivePartial`).
         partial: bool,
+        text: TextOptions,
     },
     /// Ends the live run (or removes it from the queue). Does not touch the files.
     LiveStop,
@@ -271,10 +274,30 @@ fn local_iso() -> String {
     "1970-01-01T00:00:00".to_string()
 }
 
+/// How the text is written: the model's language and the user's word fixes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextOptions {
+    pub language: Language,
+    pub glossary: Glossary,
+}
+
+impl TextOptions {
+    /// `line` with the word fixes applied; `None` when nothing is left of it.
+    fn fix(&self, line: Line) -> Option<Line> {
+        let text = self.glossary.apply(&line.text);
+        let text = text.trim();
+        (!text.is_empty()).then(|| Line {
+            text: text.to_owned(),
+            ..line
+        })
+    }
+}
+
 struct Job {
     dir: PathBuf,
     precision: Precision,
     threads: usize,
+    text: TextOptions,
 }
 
 struct LiveJob {
@@ -283,6 +306,7 @@ struct LiveJob {
     threads: usize,
     poll: Duration,
     partial: bool,
+    text: TextOptions,
 }
 
 enum Work {
@@ -363,6 +387,7 @@ impl Io {
                 dir,
                 precision,
                 threads,
+                text,
             } => {
                 let running_here = self.running.borrow().as_deref() == Some(dir.as_path());
                 let queued_here = self
@@ -377,6 +402,7 @@ impl Io {
                     dir: dir.clone(),
                     precision,
                     threads,
+                    text,
                 }));
                 // The running job does not count as waiting.
                 let ahead =
@@ -394,6 +420,7 @@ impl Io {
                 threads,
                 poll_ms,
                 partial,
+                text,
             } => {
                 let running_here = self.live.borrow().as_deref() == Some(dir.as_path());
                 let queued_here = self
@@ -410,6 +437,7 @@ impl Io {
                     threads,
                     poll: Duration::from_millis(poll_ms.max(10)),
                     partial,
+                    text,
                 }));
             }
             Command::LiveStop => {
@@ -594,6 +622,7 @@ impl Worker {
         let Some(mut loaded) = self.acquire(&job.dir, job.precision, job.threads) else {
             return;
         };
+        loaded.rec.set_language(job.text.language);
         let io = &self.io;
         let mut pending = vec![(Track::Mic, "mic.wav"), (Track::System, "system.wav")];
         let mut tracks: Vec<LiveTrack> = Vec::new();
@@ -624,7 +653,7 @@ impl Worker {
                 }
             }
             lines.sort_by_key(|l| l.start_ms);
-            for line in lines {
+            for line in lines.into_iter().filter_map(|l| job.text.fix(l)) {
                 io.emit(Event::LiveLine {
                     dir: job.dir.clone(),
                     line,
@@ -636,7 +665,7 @@ impl Worker {
                     io.emit(Event::LivePartial {
                         dir: job.dir.clone(),
                         track: t.track(),
-                        line,
+                        line: line.and_then(|l| job.text.fix(l)),
                     });
                 }
             }
@@ -695,13 +724,14 @@ impl Worker {
         let Some(mut loaded) = self.acquire(dir, job.precision, job.threads) else {
             return;
         };
+        loaded.rec.set_language(job.text.language);
         let io = &self.io;
         let outcome = Self::read_tracks(io, dir, &tracks, total_secs, loaded.rec.as_mut());
         loaded.last_used = Instant::now();
         self.loaded = Some(loaded);
         let io = &self.io;
         let lines = match outcome {
-            Ok(Some(lines)) => lines,
+            Ok(Some(lines)) => lines.into_iter().filter_map(|l| job.text.fix(l)).collect(),
             Ok(None) => {
                 if !io.closed.get() {
                     io.emit(Event::Cancelled {
@@ -822,6 +852,8 @@ mod tests {
         delay: Duration,
         /// Recognizers dropped so far.
         drops: Arc<AtomicU32>,
+        /// Every language a recognizer was set to, in order.
+        languages: Arc<std::sync::Mutex<Vec<Language>>>,
     }
 
     struct CountingRecognizer {
@@ -829,6 +861,7 @@ mod tests {
         fail: Option<String>,
         delay: Duration,
         drops: Arc<AtomicU32>,
+        languages: Arc<std::sync::Mutex<Vec<Language>>>,
     }
 
     impl Drop for CountingRecognizer {
@@ -846,6 +879,10 @@ mod tests {
                 None => Ok(format!("call{n}")),
             }
         }
+
+        fn set_language(&mut self, language: Language) {
+            self.languages.lock().unwrap().push(language);
+        }
     }
 
     impl RecognizerFactory for FakeFactory {
@@ -859,6 +896,7 @@ mod tests {
                 fail: self.fail_recognize.clone(),
                 delay: self.delay,
                 drops: self.drops.clone(),
+                languages: self.languages.clone(),
             }))
         }
     }
@@ -967,10 +1005,15 @@ mod tests {
         }
 
         fn transcribe_with(&self, dir: &Path, threads: usize) {
+            self.transcribe_text(dir, threads, TextOptions::default());
+        }
+
+        fn transcribe_text(&self, dir: &Path, threads: usize, text: TextOptions) {
             self.h().send(Command::Transcribe {
                 dir: dir.to_path_buf(),
                 precision: Precision::Int8,
                 threads,
+                text,
             });
         }
 
@@ -1533,12 +1576,17 @@ mod tests {
         }
 
         fn live_start_with(&self, dir: &Path, partial: bool) {
+            self.live_start_text(dir, partial, TextOptions::default());
+        }
+
+        fn live_start_text(&self, dir: &Path, partial: bool, text: TextOptions) {
             self.h().send(Command::LiveStart {
                 dir: dir.to_path_buf(),
                 precision: Precision::Int8,
                 threads: 4,
                 poll_ms: 20,
                 partial,
+                text,
             });
         }
 
@@ -1740,6 +1788,59 @@ mod tests {
             .events
             .iter()
             .any(|e| matches!(e, Event::LivePartial { .. })));
+        rig.h().send(Command::LiveStop);
+        rig.wait_live_ended();
+    }
+
+    // ---- language and word fixes -------------------------------------------------------
+
+    fn fixes(rules: &str, language: Language) -> TextOptions {
+        TextOptions {
+            language,
+            glossary: crate::asr::glossary::Glossary::parse(rules),
+        }
+    }
+
+    #[test]
+    fn a_job_sets_the_language_and_saves_the_fixed_text() {
+        let mut rig = Rig::new();
+        let dir = rig.session("fixes", Some(&[speech(2.0)]), None);
+        rig.transcribe_text(&dir, 4, fixes("call = โทร", Language::ThaiEnglish));
+        let (_, t) = rig.wait_done();
+        assert_eq!(t.lines.len(), 1);
+        assert_eq!(t.lines[0].text, "โทร1");
+        let json = std::fs::read_to_string(dir.join("transcript.json")).unwrap();
+        assert!(json.contains("โทร1"), "{json}");
+        assert_eq!(
+            rig.factory.languages.lock().unwrap().last(),
+            Some(&Language::ThaiEnglish)
+        );
+    }
+
+    #[test]
+    fn a_line_that_the_fixes_empty_is_dropped() {
+        let mut rig = Rig::new();
+        let dir = rig.session("fixes-empty", Some(&[speech(2.0)]), None);
+        rig.transcribe_text(&dir, 4, fixes("call1 =", Language::Thai));
+        let (_, t) = rig.wait_done();
+        assert!(t.lines.is_empty(), "{:?}", t.lines);
+    }
+
+    #[test]
+    fn live_lines_and_previews_use_the_fixes_and_the_language() {
+        let mut rig = Rig::new();
+        let dir = rig.live_dir("live-fixes");
+        growing_wav(&dir.join("mic.wav"), &[speech(3.0)]);
+        rig.live_start_text(&dir, true, fixes("call = โทร", Language::ThaiEnglish));
+        let partial = rig.wait_partial(true).unwrap();
+        assert!(partial.text.starts_with("โทร"), "{partial:?}");
+        append_wav(&dir.join("mic.wav"), &[quiet(1.5)]);
+        let line = rig.wait_line(Track::Mic);
+        assert!(line.text.starts_with("โทร"), "{line:?}");
+        assert_eq!(
+            rig.factory.languages.lock().unwrap().last(),
+            Some(&Language::ThaiEnglish)
+        );
         rig.h().send(Command::LiveStop);
         rig.wait_live_ended();
     }

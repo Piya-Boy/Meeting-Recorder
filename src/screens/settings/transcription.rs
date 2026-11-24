@@ -1,7 +1,10 @@
 use egui::{RichText, Ui};
 
 use super::{card, field, page, path_field, pill, row, row_styled, select};
+use crate::asr::engine::Language;
+use crate::asr::glossary::{self, Glossary};
 use crate::asr::model::{self, ModelStatus, Precision};
+use crate::asr::worker::TextOptions;
 use crate::components::button::{custom_button, ButtonVariant};
 use crate::components::toggle::toggle_switch;
 use crate::i18n::tr;
@@ -13,6 +16,8 @@ const THREADS: [&str; 3] = ["4 threads", "6 threads", "8 threads"];
 const THREAD_COUNTS: [usize; 3] = [4, 6, 8];
 const PRECISIONS: [&str; 2] = ["int8 (default, about 1 GB)", "fp32 (about 2.6 GB)"];
 const CHUNKS: [&str; 3] = ["500 ms", "1,000 ms", "2,000 ms"];
+/// In the order of `Language::ALL`.
+const LANGUAGES: [&str; 2] = ["Thai", "Thai + English"];
 
 /// What a model button asks the app to do (taken once per frame by `AppState`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +49,9 @@ pub struct SettingsTranscriptionScreen {
     pub threads_idx: usize,
     pub partial_transcription: bool,
     pub chunk_window_idx: usize,
+    pub language_idx: usize,
+    /// The word-fix rules as typed, one a line.
+    pub glossary_text: String,
 }
 
 impl Default for SettingsTranscriptionScreen {
@@ -58,6 +66,8 @@ impl Default for SettingsTranscriptionScreen {
             threads_idx: 0,
             partial_transcription: true,
             chunk_window_idx: 1,
+            language_idx: 0,
+            glossary_text: String::new(),
         }
     }
 }
@@ -66,6 +76,26 @@ impl SettingsTranscriptionScreen {
     /// ONNX Runtime threads picked in the select.
     pub fn threads(&self) -> usize {
         THREAD_COUNTS[self.threads_idx.min(THREAD_COUNTS.len() - 1)]
+    }
+
+    pub fn language(&self) -> Language {
+        Language::from_index(self.language_idx)
+    }
+
+    /// The number of word-fix rules and of lines that are not rules.
+    pub fn glossary_summary(&self) -> (usize, usize) {
+        (
+            Glossary::parse(&self.glossary_text).len(),
+            glossary::invalid_lines(&self.glossary_text),
+        )
+    }
+
+    /// What a transcription job or a live run is told about the text.
+    pub fn text_options(&self) -> TextOptions {
+        TextOptions {
+            language: self.language(),
+            glossary: Glossary::parse(&self.glossary_text),
+        }
     }
 }
 
@@ -312,15 +342,17 @@ pub fn draw_settings_transcription(
                     ui,
                     theme,
                     "Language",
-                    Some("Primary recognition language."),
-                    90.0,
+                    Some("Thai writes every word in Thai letters; Thai + English writes English words in Latin letters."),
+                    230.0,
                     |ui| {
-                        pill(
+                        select(
                             ui,
-                            "Thai (TH)",
-                            theme.surface_elevated,
-                            theme.on_surface,
-                            Some(theme.outline),
+                            theme,
+                            "language",
+                            &mut screen.language_idx,
+                            &LANGUAGES,
+                            208.0,
+                            true,
                         )
                     },
                 );
@@ -394,6 +426,54 @@ pub fn draw_settings_transcription(
                     ))
                     .size(12.0)
                     .color(theme.on_surface_variant),
+                );
+
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(tr("Word fixes"))
+                        .size(14.0)
+                        .family(crate::theme::bold_family())
+                        .color(theme.on_surface),
+                );
+                ui.label(
+                    RichText::new(tr(
+                        "One fix per line: what the transcript says = what it should say. Separate several wrong forms with commas. Applies to transcripts made from now on.",
+                    ))
+                    .size(12.0)
+                    .color(theme.on_surface_variant),
+                );
+                egui::Frame::NONE
+                    .fill(theme.background)
+                    .stroke(egui::Stroke::new(1.0, theme.outline))
+                    .corner_radius(egui::CornerRadius::same(6))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut screen.glossary_text)
+                                .hint_text("มอล, หมอก = มอก.")
+                                .font(egui::FontId::proportional(14.0))
+                                .text_color(theme.on_surface)
+                                .desired_rows(4)
+                                .desired_width(ui.available_width())
+                                .frame(false),
+                        );
+                    });
+                let (rules, bad) = screen.glossary_summary();
+                let mut summary = format!("{rules} {}", tr("fixes"));
+                if bad > 0 {
+                    summary.push_str(&format!(
+                        " · {bad} {}",
+                        tr("lines not understood (use wrong = right)")
+                    ));
+                }
+                ui.label(
+                    RichText::new(summary)
+                        .size(12.0)
+                        .color(if bad > 0 {
+                            theme.warning_text
+                        } else {
+                            theme.on_surface_variant
+                        }),
                 );
 
                 // Disabled, future feature
@@ -472,5 +552,18 @@ mod tests {
             1_000,
             "an unknown index falls back to the default"
         );
+    }
+
+    #[test]
+    fn the_language_select_and_the_word_fixes_summary() {
+        use crate::asr::engine::Language;
+        let mut s = SettingsTranscriptionScreen::default();
+        assert_eq!(s.language(), Language::Thai);
+        s.language_idx = 1;
+        assert_eq!(s.language(), Language::ThaiEnglish);
+        s.glossary_text = "มอล, หมอก = มอก.\nไม่ใช่กฎ\n".to_owned();
+        assert_eq!(s.glossary_summary(), (2, 1));
+        assert_eq!(s.text_options().glossary.apply("มอล"), "มอก.");
+        assert_eq!(s.text_options().language, Language::ThaiEnglish);
     }
 }
