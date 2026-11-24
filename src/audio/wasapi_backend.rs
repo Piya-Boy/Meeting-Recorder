@@ -37,7 +37,11 @@ const START_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SampleFormat {
     F32,
+    // Capture asks Windows to convert to f32 (autoconvert), so only the tests build these two;
+    // the converter stays for a device that refuses the conversion.
+    #[allow(dead_code)]
     I16,
+    #[allow(dead_code)]
     I32,
 }
 

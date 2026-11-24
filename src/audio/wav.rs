@@ -63,6 +63,7 @@ impl<W: Write + Seek> WavWriter<W> {
     }
 
     /// True when not even one more sample fits.
+    #[allow(dead_code)] // the worker learns of a full file from `write_samples` failing
     pub fn is_full(&self) -> bool {
         self.data_bytes + 2 > self.max_data_bytes
     }
@@ -94,6 +95,7 @@ impl<W: Write + Seek> WavWriter<W> {
 
 /// Fixes both size fields of a WAV written by `WavWriter` from the file length (for a file
 /// left by a crash) and returns the frame count.
+#[allow(dead_code)] // for repairing recordings after a crash; not wired into start-up yet
 pub fn recover_header(path: &Path) -> io::Result<u64> {
     let mut f = OpenOptions::new().read(true).write(true).open(path)?;
     let len = f.metadata()?.len();

@@ -1,5 +1,4 @@
 mod app;
-#[allow(dead_code)] // wired into the UI in a later task
 mod audio;
 mod branding;
 mod components;

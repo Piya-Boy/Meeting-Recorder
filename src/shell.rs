@@ -231,7 +231,10 @@ fn recorder_status_badge(ui: &mut Ui, state: &AppState, theme: &ThemeColors) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if state.recorder.state == RecorderState::Idle {
+                if matches!(
+                    state.recorder.state,
+                    RecorderState::Idle | RecorderState::Saved
+                ) {
                     let (dot, _) =
                         ui.allocate_exact_size(egui::Vec2::splat(8.0), egui::Sense::hover());
                     ui.painter().circle_filled(dot.center(), 3.5, theme.success);
@@ -243,7 +246,7 @@ fn recorder_status_badge(ui: &mut Ui, state: &AppState, theme: &ThemeColors) {
                     );
                 }
                 ui.label(
-                    RichText::new(state.recorder.state.global_label())
+                    RichText::new(state.recorder.global_label())
                         .size(11.0)
                         .color(fg),
                 );

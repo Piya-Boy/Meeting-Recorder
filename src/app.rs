@@ -173,9 +173,11 @@ impl AppState {
             } else if let Some(name) = arg.strip_prefix("--state=") {
                 use crate::screens::recorder::RecorderState;
                 state.recorder.state = match name {
+                    "starting" => RecorderState::Starting,
                     "recording" => RecorderState::Recording,
                     "paused" => RecorderState::Paused,
                     "processing" => RecorderState::Processing,
+                    "saved" => RecorderState::Saved,
                     "error" => RecorderState::Error,
                     _ => RecorderState::Idle,
                 };
@@ -251,13 +253,33 @@ impl AppState {
     pub fn enable_audio(&mut self, handle: AudioHandle) {
         handle.send(Command::ListDevices);
         self.recorder.audio = Some(handle);
+        // The mock folder belongs to someone else's profile; record under this user's.
+        if self.recorder.destination == crate::screens::recorder::MOCK_DESTINATION {
+            if let Some(home) = std::env::var_os("USERPROFILE") {
+                self.recorder.destination = std::path::PathBuf::from(home)
+                    .join("Documents")
+                    .join("MeetingRecorder")
+                    .join("Recordings")
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+    }
+
+    /// Hands the capture settings to the Recorder (it reads them when Start is pressed).
+    fn sync_audio_settings(&mut self) {
+        self.recorder.sync_capture(
+            crate::screens::settings::audio::sample_rate_hz(self.settings_audio.sample_rate_idx),
+            self.audio_choice.system_device(),
+            self.audio_choice.mic_device(),
+        );
     }
 
     /// Applies one report from the capture worker.
     pub fn apply_audio_event(&mut self, event: Event) {
-        // Recording events are handled by the Recorder (next task).
-        if let Event::Devices { system, mic } = event {
-            self.audio_choice.apply_devices(system, mic);
+        match event {
+            Event::Devices { system, mic } => self.audio_choice.apply_devices(system, mic),
+            other => self.recorder.apply_event(other),
         }
     }
 
@@ -338,8 +360,23 @@ impl eframe::App for AppState {
         crate::i18n::set_lang(crate::i18n::lang_from_index(
             self.settings_general.language_idx,
         ));
+        self.sync_audio_settings();
         for event in self.recorder.take_events() {
             self.apply_audio_event(event);
+        }
+        if let Some(notice) = self.recorder.take_notice() {
+            crate::toast::show(ctx, notice);
+        }
+        if self.recorder.audio.is_some()
+            && !matches!(
+                self.recorder.state,
+                crate::screens::recorder::RecorderState::Idle
+                    | crate::screens::recorder::RecorderState::Saved
+                    | crate::screens::recorder::RecorderState::Error
+            )
+        {
+            // Worker events do not wake egui by themselves.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
         if self.recorder.audio.is_some() && !self.audio_choice.devices_loaded {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -584,5 +621,44 @@ mod tests {
         });
         assert_eq!(state.audio_choice.system_id, "s");
         assert_eq!(state.snapshot().mic_device, "m");
+    }
+
+    /// Applies worker events until `done` holds (max 5 s).
+    fn pump(state: &mut AppState, done: impl Fn(&AppState) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(state) {
+            for e in state.recorder.take_events() {
+                state.apply_audio_event(e);
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out; state {:?}",
+                state.recorder.state
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn stop_shortcut_in_session_sends_stop_command() {
+        use crate::audio::backend::FakeBackend;
+        use crate::audio::worker::{AudioHandle, WorkerConfig};
+        use crate::screens::recorder::RecorderState;
+        let dir = crate::audio::temp_dir("app-session");
+        let mut state = AppState::default();
+        state.recorder.destination = dir.to_string_lossy().into_owned();
+        state.recorder.file_name = "shortcut".to_owned();
+        state.enable_audio(AudioHandle::spawn(
+            std::sync::Arc::new(FakeBackend::new()),
+            WorkerConfig::default(),
+        ));
+        // Ctrl+Shift+R starts ...
+        state.recorder.toggle_recording();
+        pump(&mut state, |s| s.recorder.state == RecorderState::Recording);
+        // ... and the same shortcut stops: the worker finalizes and reports Saved.
+        state.recorder.toggle_recording();
+        pump(&mut state, |s| s.recorder.state == RecorderState::Saved);
+        let saved = state.recorder.saved_dir.clone().expect("saved folder");
+        assert!(saved.join("system.wav").is_file() && saved.join("mic.wav").is_file());
     }
 }

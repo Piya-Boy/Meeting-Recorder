@@ -26,6 +26,15 @@ pub struct AudioChoice {
     pub devices_loaded: bool,
 }
 
+/// Sample rate in Hz for a position of the sample-rate dropdown.
+pub fn sample_rate_hz(index: usize) -> u32 {
+    match index {
+        1 => 44_100,
+        2 => 16_000,
+        _ => 48_000,
+    }
+}
+
 /// Dropdown position of `id`: 0 is the Windows default (also for an empty or unknown ID),
 /// devices follow from 1.
 pub fn selected_index(devices: &[DeviceInfo], id: &str) -> usize {
@@ -84,12 +93,10 @@ impl AudioChoice {
     }
 
     /// The chosen device ID, or `None` for the Windows default.
-    #[allow(dead_code)] // the Recorder uses it when it starts a session
     pub fn system_device(&self) -> Option<String> {
         some_id(&self.system_id)
     }
 
-    #[allow(dead_code)] // the Recorder uses it when it starts a session
     pub fn mic_device(&self) -> Option<String> {
         some_id(&self.mic_id)
     }
@@ -320,5 +327,17 @@ mod tests {
             vec![dev("m1", "Mic 1"), dev("unplugged", "Headset")],
         );
         assert_eq!(c.mic_index(), 2);
+    }
+
+    #[test]
+    fn sample_rate_follows_the_dropdown_order() {
+        assert_eq!(sample_rate_hz(0), 48_000);
+        assert_eq!(sample_rate_hz(1), 44_100);
+        assert_eq!(sample_rate_hz(2), 16_000);
+        assert_eq!(
+            sample_rate_hz(99),
+            48_000,
+            "unknown index falls back to the default"
+        );
     }
 }
