@@ -2,12 +2,10 @@ use egui::{RichText, Ui};
 
 use super::{card, page, row, select};
 use crate::audio::session::DeviceInfo;
-use crate::components::button::{custom_button, ButtonVariant};
 use crate::components::select::dropdown;
 use crate::components::toggle::toggle_switch;
 use crate::screens::recorder::RecorderScreen;
 use crate::theme::ThemeColors;
-use crate::toast;
 
 /// The first entry of every device dropdown; stored as an empty ID.
 const WINDOWS_DEFAULT: &str = "Windows default";
@@ -126,12 +124,10 @@ pub fn device_dropdown(
     (index != current).then_some(index)
 }
 const SAMPLE_RATES: [&str; 3] = ["48,000 Hz", "44,100 Hz", "16,000 Hz"];
-const CHANNELS: [&str; 3] = ["Separate tracks (2-ch)", "Stereo mixed", "Mono downmix"];
 
 #[derive(Default)]
 pub struct SettingsAudioScreen {
     pub sample_rate_idx: usize,
-    pub channel_idx: usize,
 }
 
 pub fn draw_settings_audio(
@@ -147,7 +143,7 @@ pub fn draw_settings_audio(
         ui,
         theme,
         "Audio",
-        "Configure Windows WASAPI loopback and microphone capture devices, format, and hardware tests.",
+        "Choose the Windows WASAPI capture devices and the sample rate. The two sources are saved as separate files.",
         |ui| {
             let picked = device_card(
                 ui,
@@ -157,7 +153,6 @@ pub fn draw_settings_audio(
                 "sys_device",
                 (&choice.system_labels(), choice.system_index()),
                 (&mut recorder.sys_audio_enabled, locked),
-                "Test system audio",
             );
             if let Some(i) = picked {
                 choice.select_system(i);
@@ -170,7 +165,6 @@ pub fn draw_settings_audio(
                 "mic_device",
                 (&choice.mic_labels(), choice.mic_index()),
                 (&mut recorder.mic_enabled, locked),
-                "Test microphone",
             );
             if let Some(i) = picked {
                 choice.select_mic(i);
@@ -184,14 +178,6 @@ pub fn draw_settings_audio(
                     Some("48,000 Hz matches Windows WASAPI shared mode and resamples cleanly for OpenThai ASR."),
                     170.0,
                     |ui| select(ui, theme, "sample_rate", &mut screen.sample_rate_idx, &SAMPLE_RATES, 150.0, true),
-                );
-                row(
-                    ui,
-                    theme,
-                    "Channel configuration",
-                    Some("Separate audio tracks preserve System Audio and Microphone independently."),
-                    200.0,
-                    |ui| select(ui, theme, "channels", &mut screen.channel_idx, &CHANNELS, 180.0, false),
                 );
             });
         },
@@ -207,7 +193,6 @@ fn device_card(
     id: &str,
     (labels, current): (&[String], usize),
     (enabled, locked): (&mut bool, bool),
-    test_label: &str,
 ) -> Option<usize> {
     let mut picked = None;
     card(ui, theme, |ui| {
@@ -229,22 +214,8 @@ fn device_card(
             });
         });
         ui.add_enabled_ui(*enabled && !locked, |ui| {
-            // Right-to-left: the test button hugs the card edge, the dropdown takes the rest.
-            let row_size = egui::vec2(ui.available_width(), 36.0);
-            ui.allocate_ui_with_layout(
-                row_size,
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    if custom_button(ui, theme, None, test_label, ButtonVariant::Secondary)
-                        .clicked()
-                    {
-                        toast::show(ui.ctx(), "Hardware test is not wired up yet (UI preview)");
-                    }
-                    let select_w = ui.available_width().max(120.0);
-                    picked = device_dropdown(ui, theme, id, labels, current, select_w);
-                },
-            );
+            let width = ui.available_width();
+            picked = device_dropdown(ui, theme, id, labels, current, width);
         });
     });
     picked

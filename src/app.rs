@@ -314,8 +314,6 @@ impl AppState {
         self.settings_appearance.accent_idx = saved.accent_idx;
         self.settings_appearance.font_scale_idx = saved.font_scale_idx;
         self.settings_general.language_idx = saved.language_idx;
-        self.settings_general.start_with_windows = saved.start_with_windows;
-        self.settings_general.minimize_to_tray = saved.minimize_to_tray;
         self.settings_general.confirm_delete = saved.confirm_delete;
         self.audio_choice.system_id = saved.system_device;
         self.audio_choice.mic_id = saved.mic_device;
@@ -336,8 +334,6 @@ impl AppState {
             accent_idx: self.settings_appearance.accent_idx,
             font_scale_idx: self.settings_appearance.font_scale_idx,
             language_idx: self.settings_general.language_idx,
-            start_with_windows: self.settings_general.start_with_windows,
-            minimize_to_tray: self.settings_general.minimize_to_tray,
             confirm_delete: self.settings_general.confirm_delete,
             system_device: self.audio_choice.system_id.clone(),
             mic_device: self.audio_choice.mic_id.clone(),
@@ -3144,6 +3140,32 @@ mod tests {
         a.recorder.state = RecorderState::Saved;
         click_switch(&mut a, Screen::Recorder, "Microphone");
         assert_eq!(next_sources(&a), (true, false));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_settings_pages_offer_nothing_that_does_nothing() {
+        // Shown in v0.0.1 with nothing behind them.
+        const GONE: [(&str, &str); 6] = [
+            ("Start with Windows", "เริ่มพร้อม Windows"),
+            ("Minimize to system tray", "ย่อลงถาดระบบ"),
+            ("Channel configuration", "การตั้งค่าช่องสัญญาณ"),
+            ("Test system audio", "ทดสอบเสียงระบบ"),
+            ("Test microphone", "ทดสอบไมโครโฟน"),
+            ("Runtime", "รันไทม์"),
+        ];
+        let base = library_dir("app-no-dead-controls");
+        let mut a = live_app(&base);
+        let mut found = Vec::new();
+        for screen in SCREENS {
+            let text = painted_text(&mut a, screen);
+            for (key, thai) in GONE {
+                if text.lines().any(|l| l == key || l == thai) {
+                    found.push(format!("{screen:?}: {key}"));
+                }
+            }
+        }
+        assert!(found.is_empty(), "{found:?}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
