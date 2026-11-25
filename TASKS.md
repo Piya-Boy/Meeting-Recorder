@@ -245,9 +245,10 @@ _None._
   - egui 0.31.1 does no text shaping: a tone mark above an upper vowel is drawn over it (in "ทั่วไป" the tone mark covers the vowel). Seen on the real exe in the interface; transcript text is drawn the same way. `v0.0.1` has it. `design.md` asks for tone marks to be tested.
   - Verification: stacked marks are readable in the interface and in a transcript, on screenshots of the real exe.
 
-- [ ] Task: Settings that are not saved
-  - These go back to their defaults at every start: the two source switches, the sample rate, "Partial transcription" and "Streaming chunk window". A microphone switched off is on again after a restart.
-  - Verification: change each, restart the real exe, and see it kept.
+- [x] Task: Settings that are not saved (branch `fix/known-limits`)
+  - Built: `settings.ini` also holds `audio.system_enabled`, `audio.mic_enabled`, `audio.sample_rate_index`, `asr.partial` and `asr.chunk_window_index`. A file without these keys, or with bad values, keeps the old defaults.
+  - Verification Evidence: two restart tests failed first (a microphone switched off came back on; the sample rate went back to 48000); `cargo test --locked` 404 passed, 6 ignored. Real exe with a temporary profile, nothing recorded: started with `audio.mic_enabled=false` in the file, the Recorder showed the microphone switched off; after its start-up update check the program rewrote the file with all five keys, the microphone still `false`.
+  - Not run on the real exe: flipping a switch with the mouse and restarting (clicks posted to the window were ignored); the tests cover that path.
 
 ## Rules
 

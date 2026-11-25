@@ -47,7 +47,7 @@ The Recorder captures real audio (system and microphone as separate WAV files; t
 - **Languages:** the whole interface switches between English and Thai from Settings > General. Text without a Thai translation falls back to English.
 - **Update check:** once a day (Settings > General, can be turned off) and from Settings > Advanced the app asks GitHub Releases whether a newer version exists and says so; it does not install anything.
 - **Fonts:** Inter, JetBrains Mono and Noto Sans Thai are bundled, so Thai renders correctly on any machine.
-- **Preferences** (theme, accent, font scale, language and the general toggles) are saved when they change and restored on the next launch. The source switches, the sample rate and the two live-transcript settings are not saved yet.
+- **Preferences** (theme, accent, font scale, language, the general toggles, the two source switches, the devices, the sample rate and the transcription settings) are saved when they change and restored on the next launch.
 - **Keyboard:** shortcuts that work while the app window has focus, and a visible focus ring when navigating with Tab.
 - **Engine states:** the transcription engine shows loading, ready and unavailable states on the Recorder and in Settings > Transcription.
 
@@ -70,7 +70,7 @@ Get the zip from [Releases](https://github.com/Piya-Boy/Meeting-Recorder/release
 - The program is not code-signed, so Windows SmartScreen may warn on the first run: **More info**, then **Run anyway**.
 - Before that, check the download against `SHA256SUMS.txt` from the same release: `Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256`.
 - Known problems in the `v0.0.1` zip. They are fixed in the source and not released yet:
-  - A source switched off in **Settings > Audio** is still recorded. Set the switches on the **Recorder** page before you press Record.
+  - A source switched off in **Settings > Audio** is still recorded. Set the switches on the **Recorder** page before you press Record, and again after each restart: they are not saved.
   - With Teams or Zoom open, even in the background, the system track can be silent, also for a meeting held in that app. Quit them completely (from the tray too), press Record, check that **System Audio** says "All system audio", and only then open the app and join. The **SYS** meter must move while others speak.
   - Closing the window ends a recording without asking. "Minimize to system tray" and several other settings do nothing.
   - The zip lacks the licence texts of the libraries and fonts.

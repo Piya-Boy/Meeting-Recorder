@@ -319,6 +319,11 @@ impl AppState {
         self.settings_general.confirm_delete = saved.confirm_delete;
         self.audio_choice.system_id = saved.system_device;
         self.audio_choice.mic_id = saved.mic_device;
+        self.recorder.sys_audio_enabled = saved.system_enabled;
+        self.recorder.mic_enabled = saved.mic_enabled;
+        self.settings_audio.sample_rate_idx = saved.sample_rate_idx;
+        self.settings_transcription.partial_transcription = saved.partial_transcription;
+        self.settings_transcription.chunk_window_idx = saved.chunk_window_idx;
         self.settings_transcription.precision = Precision::from_str_lossy(&saved.asr_precision);
         self.settings_transcription.threads_idx = threads_index(saved.asr_threads);
         self.settings_transcription.language_idx =
@@ -339,6 +344,11 @@ impl AppState {
             confirm_delete: self.settings_general.confirm_delete,
             system_device: self.audio_choice.system_id.clone(),
             mic_device: self.audio_choice.mic_id.clone(),
+            system_enabled: self.recorder.sys_audio_enabled,
+            mic_enabled: self.recorder.mic_enabled,
+            sample_rate_idx: self.settings_audio.sample_rate_idx,
+            partial_transcription: self.settings_transcription.partial_transcription,
+            chunk_window_idx: self.settings_transcription.chunk_window_idx,
             asr_precision: self.settings_transcription.precision.as_str().to_owned(),
             asr_threads: self.settings_transcription.threads() as u32,
             asr_language: self.settings_transcription.language().code().to_owned(),
@@ -1789,6 +1799,41 @@ mod tests {
             state.audio_choice.mic_id, "gone",
             "stored id is not overwritten"
         );
+    }
+
+    /// What a restart does: the settings file is written, then read by a new app.
+    fn restart(a: &AppState) -> AppState {
+        let mut b = AppState::default();
+        b.enable_persistence(Persisted::from_text(&a.snapshot().to_text()));
+        b.sync_audio_settings();
+        b
+    }
+
+    #[test]
+    fn a_source_switched_off_stays_off_after_a_restart() {
+        let mut a = AppState::default();
+        a.recorder.mic_enabled = false;
+        let request = restart(&a).recorder.start_request();
+        assert!(!request.mic, "the microphone was switched off");
+        assert!(request.system);
+
+        a.recorder.mic_enabled = true;
+        a.recorder.sys_audio_enabled = false;
+        let request = restart(&a).recorder.start_request();
+        assert!(request.mic);
+        assert!(!request.system, "system audio was switched off");
+    }
+
+    #[test]
+    fn the_sample_rate_and_live_transcript_settings_survive_a_restart() {
+        let mut a = AppState::default();
+        a.settings_audio.sample_rate_idx = 2;
+        a.settings_transcription.partial_transcription = false;
+        a.settings_transcription.chunk_window_idx = 2;
+        let b = restart(&a);
+        assert_eq!(b.recorder.start_request().sample_rate, 16_000);
+        assert!(!b.settings_transcription.partial_transcription);
+        assert_eq!(b.settings_transcription.chunk_window_idx, 2);
     }
 
     #[test]
