@@ -1,6 +1,7 @@
 //! Persistent user preferences: a tiny `key=value` file in `%APPDATA%\MeetingRecorder`.
 //!
-//! Only preferences are stored (theme, accent, font scale, language, general toggles).
+//! Only preferences are stored: how the app looks and what the next recording should use
+//! (sources, devices, sample rate, transcription), never anything that was recorded.
 //! Unknown keys and malformed lines are ignored, so older and newer builds can share a file.
 
 use std::path::PathBuf;
@@ -14,12 +15,18 @@ pub struct Persisted {
     pub accent_idx: usize,
     pub font_scale_idx: usize,
     pub language_idx: usize,
-    pub start_with_windows: bool,
-    pub minimize_to_tray: bool,
     pub confirm_delete: bool,
     /// Device IDs (not list positions); empty means the Windows default.
     pub system_device: String,
     pub mic_device: String,
+    /// Which sources the next recording captures.
+    pub system_enabled: bool,
+    pub mic_enabled: bool,
+    /// Position in the sample-rate list of Settings > Audio.
+    pub sample_rate_idx: usize,
+    /// Show transcript text while recording, and how often it is refreshed (list position).
+    pub partial_transcription: bool,
+    pub chunk_window_idx: usize,
     /// Model weights: `int8` or `fp32`.
     pub asr_precision: String,
     /// ONNX Runtime threads for transcription: 4, 6 or 8.
@@ -41,11 +48,14 @@ impl Default for Persisted {
             accent_idx: 0,
             font_scale_idx: 1,
             language_idx: 0,
-            start_with_windows: false,
-            minimize_to_tray: true,
             confirm_delete: true,
             system_device: String::new(),
             mic_device: String::new(),
+            system_enabled: true,
+            mic_enabled: true,
+            sample_rate_idx: 0,
+            partial_transcription: true,
+            chunk_window_idx: 1,
             asr_precision: "int8".to_owned(),
             asr_threads: 4,
             asr_language: "th".to_owned(),
@@ -67,19 +77,25 @@ fn theme_name(mode: ThemeMode) -> &'static str {
 impl Persisted {
     pub fn to_text(&self) -> String {
         let mut text = format!(
-            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nstart_with_windows={}\nminimize_to_tray={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\nasr.precision={}\nasr.threads={}\n",
+            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\nasr.precision={}\nasr.threads={}\n",
             theme_name(self.theme_mode),
             self.accent_idx,
             self.font_scale_idx,
             self.language_idx,
-            self.start_with_windows,
-            self.minimize_to_tray,
             self.confirm_delete,
             self.system_device,
             self.mic_device,
             self.asr_precision,
             self.asr_threads,
         );
+        text.push_str(&format!(
+            "audio.system_enabled={}\naudio.mic_enabled={}\naudio.sample_rate_index={}\nasr.partial={}\nasr.chunk_window_index={}\n",
+            self.system_enabled,
+            self.mic_enabled,
+            self.sample_rate_idx,
+            self.partial_transcription,
+            self.chunk_window_idx,
+        ));
         text.push_str(&format!("asr.language={}\n", self.asr_language));
         for rule in &self.asr_glossary {
             text.push_str(&format!("asr.glossary={rule}\n"));
@@ -109,11 +125,14 @@ impl Persisted {
                 "accent" => set_index(&mut out.accent_idx, value, 3),
                 "font_scale" => set_index(&mut out.font_scale_idx, value, 4),
                 "language" => set_index(&mut out.language_idx, value, 2),
-                "start_with_windows" => set_bool(&mut out.start_with_windows, value),
-                "minimize_to_tray" => set_bool(&mut out.minimize_to_tray, value),
                 "confirm_delete" => set_bool(&mut out.confirm_delete, value),
                 "audio.system_device" => out.system_device = value.to_owned(),
                 "audio.mic_device" => out.mic_device = value.to_owned(),
+                "audio.system_enabled" => set_bool(&mut out.system_enabled, value),
+                "audio.mic_enabled" => set_bool(&mut out.mic_enabled, value),
+                "audio.sample_rate_index" => set_index(&mut out.sample_rate_idx, value, 3),
+                "asr.partial" => set_bool(&mut out.partial_transcription, value),
+                "asr.chunk_window_index" => set_index(&mut out.chunk_window_idx, value, 3),
                 "asr.precision" => {
                     if matches!(value, "int8" | "fp32") {
                         out.asr_precision = value.to_owned();
@@ -210,11 +229,14 @@ mod tests {
             accent_idx: 2,
             font_scale_idx: 3,
             language_idx: 1,
-            start_with_windows: true,
-            minimize_to_tray: false,
             confirm_delete: false,
             system_device: String::new(),
             mic_device: String::new(),
+            system_enabled: false,
+            mic_enabled: false,
+            sample_rate_idx: 2,
+            partial_transcription: false,
+            chunk_window_idx: 2,
             asr_precision: "int8".to_owned(),
             asr_threads: 6,
             asr_language: "th".to_owned(),
@@ -223,6 +245,23 @@ mod tests {
             update_last_check: 0,
         };
         assert_eq!(Persisted::from_text(&s.to_text()), s);
+    }
+
+    #[test]
+    fn a_file_without_the_recorder_keys_keeps_the_defaults() {
+        // Every file saved before these keys existed.
+        let s = Persisted::from_text("theme=light\naudio.mic_device=m\n");
+        assert!(s.system_enabled && s.mic_enabled && s.partial_transcription);
+        assert_eq!((s.sample_rate_idx, s.chunk_window_idx), (0, 1));
+    }
+
+    #[test]
+    fn bad_recorder_values_keep_the_defaults() {
+        let s = Persisted::from_text(
+            "audio.system_enabled=no\naudio.mic_enabled=0\naudio.sample_rate_index=3\n\
+             asr.partial=off\nasr.chunk_window_index=-1\n",
+        );
+        assert_eq!(s, Persisted::default());
     }
 
     #[test]
@@ -268,6 +307,19 @@ mod tests {
         let s = Persisted::from_text("theme=light\n");
         assert_eq!(s.asr_precision, "int8");
         assert_eq!(s.asr_threads, 4);
+    }
+
+    #[test]
+    fn keys_of_removed_settings_are_ignored_and_not_written_again() {
+        // v0.0.1 wrote these two; `minimize_to_tray=true` is in every file it saved.
+        let s = Persisted::from_text(
+            "theme=light\nstart_with_windows=true\nminimize_to_tray=true\nconfirm_delete=false\n",
+        );
+        assert_eq!(s.theme_mode, ThemeMode::Light);
+        assert!(!s.confirm_delete);
+        let text = s.to_text();
+        assert!(!text.contains("start_with_windows"), "{text}");
+        assert!(!text.contains("minimize_to_tray"), "{text}");
     }
 
     #[test]

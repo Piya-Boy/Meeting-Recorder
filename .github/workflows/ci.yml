@@ -71,3 +71,23 @@ jobs:
       # Fails on a known vulnerability in Cargo.lock; unmaintained-crate warnings do not fail it.
       - name: Dependency audit
         run: cargo audit
+
+  # The licence texts that ship with the program must match what is linked into it.
+  licences:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-about
+        run: cargo install cargo-about --version 0.9.3 --locked --features cli
+
+      - name: THIRD_PARTY_LICENSES.txt is up to date
+        run: |
+          python3 .github/scripts/third_party_licenses.py
+          git diff --exit-code -- THIRD_PARTY_LICENSES.txt

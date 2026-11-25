@@ -10,14 +10,13 @@ use super::session::{DeviceInfo, Source};
 pub enum SourceKind {
     Mic { device: Option<String> },
     WholeSystem { device: Option<String> },
-    Process { pid: u32 },
 }
 
 impl SourceKind {
     pub fn source(&self) -> Source {
         match self {
             SourceKind::Mic { .. } => Source::Mic,
-            SourceKind::WholeSystem { .. } | SourceKind::Process { .. } => Source::System,
+            SourceKind::WholeSystem { .. } => Source::System,
         }
     }
 }
@@ -37,6 +36,9 @@ pub enum Msg {
 
 pub trait Stream: Send {
     fn stop(self: Box<Self>);
+    /// Whether this stream has sent `Msg::Lost`; true no later than the message arrives. The
+    /// message names only the source, so this tells it from one of a stream already replaced.
+    fn failed(&self) -> bool;
 }
 
 pub trait Backend: Send + Sync + 'static {
@@ -48,8 +50,6 @@ pub trait Backend: Send + Sync + 'static {
         sample_rate: u32,
         tx: Sender<Msg>,
     ) -> Result<Box<dyn Stream>, String>;
-    /// The meeting app process to capture, if one is running.
-    fn meeting_target(&self) -> Option<u32>;
     /// System render devices (for loopback), then microphones.
     fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>);
 }
@@ -67,15 +67,19 @@ mod fake {
     pub(crate) enum FailKind {
         Mic,
         WholeSystem,
-        Process,
     }
 
     #[derive(Default)]
     struct State {
         opened: Vec<SourceKind>,
         fail: Vec<FailKind>,
-        target: Option<u32>,
         txs: HashMap<usize, (u64, Sender<Msg>)>,
+        /// Device IDs that cannot be opened at the moment.
+        unplugged: Vec<String>,
+        /// Generations of the streams that have reported a loss.
+        failed: Vec<u64>,
+        /// Streams that are open, by generation.
+        live: Vec<(u64, SourceKind)>,
         next_gen: u64,
         devices: (Vec<DeviceInfo>, Vec<DeviceInfo>),
     }
@@ -87,8 +91,7 @@ mod fake {
         }
     }
 
-    /// Lets a test push chunks per source, set the meeting target, make opens fail and see
-    /// what was opened.
+    /// Lets a test push chunks per source, make opens fail and see what was opened.
     #[derive(Clone, Default)]
     pub(crate) struct FakeBackend {
         state: Arc<Mutex<State>>,
@@ -101,8 +104,20 @@ mod fake {
         pub(crate) fn fail_open(&self, kind: FailKind) {
             self.state.lock().unwrap().fail.push(kind);
         }
-        pub(crate) fn set_target(&self, pid: Option<u32>) {
-            self.state.lock().unwrap().target = pid;
+        pub(crate) fn unplug(&self, id: &str) {
+            self.state.lock().unwrap().unplugged.push(id.to_owned());
+        }
+        pub(crate) fn plug_in(&self, id: &str) {
+            self.state.lock().unwrap().unplugged.retain(|d| d != id);
+        }
+        /// The streams of `source` that are open now (a lost stream stays until stopped).
+        pub(crate) fn live(&self, source: Source) -> Vec<SourceKind> {
+            let st = self.state.lock().unwrap();
+            st.live
+                .iter()
+                .filter(|(_, k)| k.source() == source)
+                .map(|(_, k)| k.clone())
+                .collect()
         }
         pub(crate) fn set_devices(&self, system: Vec<DeviceInfo>, mic: Vec<DeviceInfo>) {
             self.state.lock().unwrap().devices = (system, mic);
@@ -125,10 +140,22 @@ mod fake {
             }
         }
         /// Reports the stream of `source` as lost and closes it.
+        /// A loss report of a stream that is no longer the current one of `source`: it names
+        /// only the source, as every report does. The current stream stays healthy.
+        pub(crate) fn report_old_loss(&self, source: Source) -> bool {
+            let st = self.state.lock().unwrap();
+            match st.txs.get(&slot(source)) {
+                Some((_, tx)) => tx.send(Msg::Lost(source)).is_ok(),
+                None => false,
+            }
+        }
         pub(crate) fn lose(&self, source: Source) -> bool {
             let mut st = self.state.lock().unwrap();
             match st.txs.remove(&slot(source)) {
-                Some((_, tx)) => tx.send(Msg::Lost(source)).is_ok(),
+                Some((generation, tx)) => {
+                    st.failed.push(generation);
+                    tx.send(Msg::Lost(source)).is_ok()
+                }
                 None => false,
             }
         }
@@ -141,8 +168,13 @@ mod fake {
     }
 
     impl Stream for FakeStream {
+        fn failed(&self) -> bool {
+            self.state.lock().unwrap().failed.contains(&self.generation)
+        }
+
         fn stop(self: Box<Self>) {
             let mut st = self.state.lock().unwrap();
+            st.live.retain(|(g, _)| *g != self.generation);
             if st.txs.get(&self.slot).map(|(g, _)| *g) == Some(self.generation) {
                 st.txs.remove(&self.slot);
             }
@@ -161,25 +193,25 @@ mod fake {
             let fails = match kind {
                 SourceKind::Mic { .. } => FailKind::Mic,
                 SourceKind::WholeSystem { .. } => FailKind::WholeSystem,
-                SourceKind::Process { .. } => FailKind::Process,
             };
             if st.fail.contains(&fails) {
                 return Err(format!("fake open failure: {fails:?}"));
+            }
+            let (SourceKind::Mic { device } | SourceKind::WholeSystem { device }) = &kind;
+            if device.as_ref().is_some_and(|id| st.unplugged.contains(id)) {
+                return Err(format!("fake open failure: {kind:?} is unplugged"));
             }
             let slot = slot(kind.source());
             st.next_gen += 1;
             let generation = st.next_gen;
             st.txs.insert(slot, (generation, tx));
+            st.live.push((generation, kind.clone()));
             st.opened.push(kind);
             Ok(Box::new(FakeStream {
                 state: self.state.clone(),
                 slot,
                 generation,
             }))
-        }
-
-        fn meeting_target(&self) -> Option<u32> {
-            self.state.lock().unwrap().target
         }
 
         fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>) {

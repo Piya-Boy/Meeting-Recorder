@@ -298,6 +298,10 @@ fn draw_document_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut TranscriptD
                                     egui::Label::new(
                                         RichText::new(&article.text)
                                             .size(15.0)
+                                            .line_height(crate::thai_marks::line_height(
+                                                &article.text,
+                                                15.0,
+                                            ))
                                             .color(theme.on_surface),
                                     )
                                     .wrap(),
@@ -306,10 +310,23 @@ fn draw_document_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut TranscriptD
                         return;
                     }
                     let w = ui.available_width() - 8.0;
+                    // As egui's own layouter, plus the line height that Thai needs.
+                    let mut layouter = |ui: &Ui, text: &str, wrap_width: f32| {
+                        let mut job = egui::text::LayoutJob::simple(
+                            text.to_owned(),
+                            egui::FontId::proportional(15.0),
+                            theme.on_surface,
+                            wrap_width,
+                        );
+                        for section in &mut job.sections {
+                            section.format.line_height = crate::thai_marks::line_height(text, 15.0);
+                        }
+                        ui.fonts(|f| f.layout_job(job))
+                    };
                     ui.add(
                         egui::TextEdit::multiline(&mut article.text)
                             .font(egui::FontId::proportional(15.0))
-                            .text_color(theme.on_surface)
+                            .layouter(&mut layouter)
                             .desired_rows(1)
                             .desired_width(w)
                             .frame(false)

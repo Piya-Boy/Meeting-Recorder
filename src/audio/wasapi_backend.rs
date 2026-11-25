@@ -1,4 +1,4 @@
-//! WASAPI capture (Windows): microphone, whole-system loopback, per-process loopback.
+//! WASAPI capture (Windows): microphone and whole-system loopback.
 //!
 //! Each stream runs on its own thread (COM objects are created there), in shared event mode
 //! with automatic format conversion to mono 32-bit float at the session rate (stereo as a
@@ -6,7 +6,6 @@
 //! device's QPC timestamps, so gaps (loopback sends nothing while no sound plays) and clock
 //! drift show up as differences the worker's `TrackClock` corrects.
 
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -15,23 +14,16 @@ use std::time::{Duration, Instant};
 
 use wasapi::{
     deinitialize, initialize_mta, AudioCaptureClient, AudioClient, DeviceEnumerator, Direction,
-    Handle, SampleType, SessionState, StreamMode, WaveFormat,
-};
-use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    Handle, SampleType, StreamMode, WaveFormat,
 };
 
 use super::backend::{Backend, Chunk, Msg, SourceKind, Stream};
-use super::procfind;
 use super::session::{DeviceInfo, Source};
 
 /// Buffer duration asked from the audio engine (20 ms, in 100 ns units).
 const BUFFER_HNS: i64 = 200_000;
 /// How long a capture thread waits for the device event before checking the stop flag.
 const WAIT_MS: u32 = 50;
-/// How often a process source checks that its process still exists.
-const ALIVE_CHECK: Duration = Duration::from_secs(1);
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,11 +132,18 @@ impl Default for WasapiBackend {
 
 struct WasapiStream {
     stop: Arc<AtomicBool>,
+    /// Set by the capture thread before it reports the stream as lost.
+    failed: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Stream for WasapiStream {
     fn stop(self: Box<Self>) {} // Drop does the work
+
+    fn failed(&self) -> bool {
+        // Sending and receiving the report orders this after the store.
+        self.failed.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for WasapiStream {
@@ -167,12 +166,21 @@ impl Backend for WasapiBackend {
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread_stop = stop.clone();
+        let failed = Arc::new(AtomicBool::new(false));
+        let thread_failed = failed.clone();
         let join = std::thread::Builder::new()
             .name("wasapi-capture".into())
-            .spawn(move || capture_thread(kind, origin, sample_rate, tx, thread_stop, ready_tx))
+            .spawn(move || {
+                let flags = Flags {
+                    stop: thread_stop,
+                    failed: thread_failed,
+                };
+                capture_thread(kind, origin, sample_rate, tx, flags, ready_tx)
+            })
             .map_err(|e| e.to_string())?;
         let stream = WasapiStream {
             stop,
+            failed,
             join: Some(join),
         };
         match ready_rx.recv_timeout(START_TIMEOUT) {
@@ -180,11 +188,6 @@ impl Backend for WasapiBackend {
             Ok(Err(e)) => Err(e), // dropping `stream` joins the finished thread
             Err(_) => Err("Starting audio capture timed out".to_string()),
         }
-    }
-
-    fn meeting_target(&self) -> Option<u32> {
-        let _ = initialize_mta();
-        procfind::pick_target(&procfind::list_processes(), &active_audio_pids())
     }
 
     fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>) {
@@ -219,53 +222,6 @@ fn devices(direction: Direction) -> Vec<DeviceInfo> {
     out
 }
 
-/// Pids that own an active audio session on any output device.
-fn active_audio_pids() -> HashSet<u32> {
-    let mut out = HashSet::new();
-    let Ok(enumerator) = DeviceEnumerator::new() else {
-        return out;
-    };
-    let Ok(collection) = enumerator.get_device_collection(Direction::Render) else {
-        return out;
-    };
-    for device in &collection {
-        let Ok(device) = device else { continue };
-        let Ok(manager) = device.get_iaudiosessionmanager() else {
-            continue;
-        };
-        let Ok(sessions) = manager.get_audiosessionenumerator() else {
-            continue;
-        };
-        let Ok(count) = sessions.get_count() else {
-            continue;
-        };
-        for i in 0..count {
-            let Ok(session) = sessions.get_session(i) else {
-                continue;
-            };
-            if matches!(session.get_state(), Ok(SessionState::Active)) {
-                if let Ok(pid) = session.get_process_id() {
-                    out.insert(pid);
-                }
-            }
-        }
-    }
-    out
-}
-
-fn process_alive(pid: u32) -> bool {
-    // SAFETY: the handle is checked for failure and closed before returning.
-    unsafe {
-        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-        if h == 0 {
-            return false;
-        }
-        let waited = WaitForSingleObject(h, 0);
-        CloseHandle(h);
-        waited != WAIT_OBJECT_0
-    }
-}
-
 struct Opened {
     client: AudioClient,
     event: Handle,
@@ -286,9 +242,6 @@ fn make_client(kind: &SourceKind, enumerator: &DeviceEnumerator) -> Result<Audio
         SourceKind::Mic { device } => pick(device, Direction::Capture),
         // A render device captured as `Capture` is a loopback.
         SourceKind::WholeSystem { device } => pick(device, Direction::Render),
-        SourceKind::Process { pid } => {
-            AudioClient::new_application_loopback_client(*pid, true).map_err(|e| e.to_string())
-        }
     }
 }
 
@@ -321,12 +274,18 @@ fn open_stream(kind: &SourceKind, rate: u32) -> Result<Opened, String> {
     Err(last)
 }
 
+/// What a capture thread shares with its stream.
+struct Flags {
+    stop: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+}
+
 fn capture_thread(
     kind: SourceKind,
     origin: Instant,
     rate: u32,
     tx: Sender<Msg>,
-    stop: Arc<AtomicBool>,
+    flags: Flags,
     ready: Sender<Result<(), String>>,
 ) {
     let _ = initialize_mta();
@@ -336,31 +295,30 @@ fn capture_thread(
         }
         Ok(opened) => {
             let _ = ready.send(Ok(()));
-            run_capture(&kind, origin, rate, &tx, &stop, &opened);
+            run_capture(kind.source(), origin, rate, &tx, &flags, &opened);
             let _ = opened.client.stop_stream();
         }
     }
     deinitialize();
 }
 
-/// Reads packets until stopped; reports `Lost` once if the device or process goes away.
+/// Reads packets until stopped; reports `Lost` once if the device goes away.
 fn run_capture(
-    kind: &SourceKind,
+    source: Source,
     origin: Instant,
     rate: u32,
     tx: &Sender<Msg>,
-    stop: &AtomicBool,
+    flags: &Flags,
     o: &Opened,
 ) {
-    let source: Source = kind.source();
     let frame_bytes = o.channels * 4;
     let mut timeline = Timeline::new(origin, rate);
     let mut buf = Vec::new();
-    let mut last_alive = Instant::now();
     let lost = || {
+        flags.failed.store(true, Ordering::Relaxed);
         let _ = tx.send(Msg::Lost(source));
     };
-    while !stop.load(Ordering::Relaxed) {
+    while !flags.stop.load(Ordering::Relaxed) {
         let _ = o.event.wait_for_event(WAIT_MS); // a timeout just means no packet yet
         loop {
             let frames = match o.capture.get_next_packet_size() {
@@ -396,14 +354,6 @@ fn run_capture(
                 .is_err()
             {
                 return;
-            }
-        }
-        if let SourceKind::Process { pid } = kind {
-            if last_alive.elapsed() >= ALIVE_CHECK {
-                last_alive = Instant::now();
-                if !process_alive(*pid) {
-                    return lost();
-                }
             }
         }
     }
@@ -565,19 +515,6 @@ mod tests {
     fn wasapi_whole_system_loopback_opens() {
         let (msgs, opened) = collect(SourceKind::WholeSystem { device: None }, 1);
         opened.expect("open default loopback");
-        assert!(!msgs.iter().any(|m| matches!(m, Msg::Lost(_))));
-    }
-
-    #[test]
-    #[ignore = "needs Windows 11 / 10 build with process loopback"]
-    fn wasapi_process_loopback_opens_for_own_pid() {
-        let (msgs, opened) = collect(
-            SourceKind::Process {
-                pid: std::process::id(),
-            },
-            1,
-        );
-        opened.expect("open process loopback");
         assert!(!msgs.iter().any(|m| matches!(m, Msg::Lost(_))));
     }
 }

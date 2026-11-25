@@ -15,8 +15,6 @@ const SHORTCUTS: [(&str, &str); 4] = [
 
 pub struct SettingsGeneralScreen {
     pub language_idx: usize,
-    pub start_with_windows: bool,
-    pub minimize_to_tray: bool,
     pub confirm_delete: bool,
     pub check_updates: bool,
 }
@@ -25,8 +23,6 @@ impl Default for SettingsGeneralScreen {
     fn default() -> Self {
         Self {
             language_idx: 0,
-            start_with_windows: false,
-            minimize_to_tray: true,
             confirm_delete: true,
             check_updates: true,
         }
@@ -38,7 +34,7 @@ pub fn draw_settings_general(ui: &mut Ui, screen: &mut SettingsGeneralScreen, th
         ui,
         theme,
         "General",
-        "Configure startup behavior, system tray integration, and global shortcuts.",
+        "Language, behaviour and keyboard shortcuts. The shortcuts work while this window has focus.",
         |ui| {
             card(ui, theme, |ui| {
                 row(
@@ -48,26 +44,6 @@ pub fn draw_settings_general(ui: &mut Ui, screen: &mut SettingsGeneralScreen, th
                     Some("Interface display language (transcription language is set under Transcription)."),
                     180.0,
                     |ui| select(ui, theme, "app_language", &mut screen.language_idx, &LANGUAGES, 160.0, false),
-                );
-                row(
-                    ui,
-                    theme,
-                    "Start with Windows",
-                    Some("Launch Meeting Recorder automatically when signing in to Windows 11."),
-                    40.0,
-                    |ui| {
-                        toggle_switch(ui, theme, &mut screen.start_with_windows);
-                    },
-                );
-                row(
-                    ui,
-                    theme,
-                    "Minimize to system tray",
-                    Some("Keep running in the Windows notification area when closing the main window."),
-                    40.0,
-                    |ui| {
-                        toggle_switch(ui, theme, &mut screen.minimize_to_tray);
-                    },
                 );
                 row(
                     ui,

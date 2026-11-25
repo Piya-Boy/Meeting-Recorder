@@ -11,7 +11,6 @@ use crate::i18n::tr;
 use crate::screens::recorder::EngineState;
 use crate::theme::ThemeColors;
 
-const RUNTIMES: [&str; 1] = ["ONNX Runtime (CPU)"];
 const THREADS: [&str; 3] = ["4 threads", "6 threads", "8 threads"];
 const THREAD_COUNTS: [usize; 3] = [4, 6, 8];
 const PRECISIONS: [&str; 2] = ["int8 (default, about 1 GB)", "fp32 (about 2.6 GB)"];
@@ -45,7 +44,6 @@ pub struct SettingsTranscriptionScreen {
     pub busy: bool,
     /// Set by a button press; taken by the app.
     pub action: Option<ModelAction>,
-    pub runtime_idx: usize,
     pub threads_idx: usize,
     pub partial_transcription: bool,
     pub chunk_window_idx: usize,
@@ -62,7 +60,6 @@ impl Default for SettingsTranscriptionScreen {
             model_status: ModelStatus::Missing,
             busy: false,
             action: None,
-            runtime_idx: 0,
             threads_idx: 0,
             partial_transcription: true,
             chunk_window_idx: 1,
@@ -353,24 +350,6 @@ pub fn draw_settings_transcription(
                             &LANGUAGES,
                             208.0,
                             true,
-                        )
-                    },
-                );
-                row(
-                    ui,
-                    theme,
-                    "Runtime",
-                    Some("Execution backend (subject to model compatibility)."),
-                    230.0,
-                    |ui| {
-                        select(
-                            ui,
-                            theme,
-                            "runtime",
-                            &mut screen.runtime_idx,
-                            &RUNTIMES,
-                            208.0,
-                            false,
                         )
                     },
                 );

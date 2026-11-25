@@ -4,7 +4,6 @@ use super::{card, page, section_title};
 use crate::components::button::{compact_button, ButtonVariant};
 use crate::i18n::tr;
 use crate::theme::ThemeColors;
-use crate::toast;
 use crate::update::UpdateState;
 
 pub struct SettingsAdvancedScreen {
@@ -14,6 +13,8 @@ pub struct SettingsAdvancedScreen {
     pub check_requested: bool,
     /// Set by the "Open download page" button; taken by the app.
     pub open_requested: bool,
+    /// The user asked to read the licence texts; the app opens the viewer.
+    pub licenses_requested: bool,
 }
 
 impl Default for SettingsAdvancedScreen {
@@ -22,12 +23,9 @@ impl Default for SettingsAdvancedScreen {
             update: UpdateState::Idle,
             check_requested: false,
             open_requested: false,
+            licenses_requested: false,
         }
     }
-}
-
-fn not_wired(ui: &Ui, what: &str) {
-    toast::show(ui.ctx(), crate::i18n::not_wired(what));
 }
 
 /// The line under the version: what the update check found (nothing before the first check).
@@ -80,7 +78,7 @@ pub fn draw_settings_advanced(
                         );
                         ui.label(
                             RichText::new(format!(
-                                "{} {} · Windows 11 x86_64",
+                                "{} {} · Windows x86_64",
                                 tr("Version"),
                                 crate::update::VERSION
                             ))
@@ -98,7 +96,7 @@ pub fn draw_settings_advanced(
                         )
                         .clicked()
                         {
-                            not_wired(ui, "The licenses viewer");
+                            screen.licenses_requested = true;
                         }
                     });
                 });

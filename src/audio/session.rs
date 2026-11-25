@@ -55,8 +55,11 @@ pub enum Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceStatus {
     Active,
-    AllSystemFallback,
-    WaitingForApp,
+    /// The system track: everything that plays on the chosen output device.
+    AllSystem,
+    /// The system track records the Windows default output, because the chosen output device
+    /// cannot be opened.
+    DefaultOutput,
     DeviceLost,
     Disabled,
     Failed(String),

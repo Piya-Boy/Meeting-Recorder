@@ -63,14 +63,6 @@ pub fn thai_of(s: &str) -> Option<&'static str> {
     THAI.iter().find(|(k, _)| *k == s).map(|(_, v)| *v)
 }
 
-/// Toast text for an action whose backend is not connected yet.
-pub fn not_wired(what: &str) -> String {
-    match lang() {
-        Lang::En => format!("{what} is not wired up yet (UI preview)"),
-        Lang::Th => format!("{} ยังไม่เชื่อมต่อ (ตัวอย่าง UI)", tr(what)),
-    }
-}
-
 /// Toast text for an export format whose backend is not connected yet.
 pub fn export_not_wired(fmt: &str) -> String {
     match lang() {
@@ -106,14 +98,11 @@ const THAI: &[(&str, &str)] = &[
     ("Auto-scroll", "เลื่อนอัตโนมัติ"),
     ("Blue", "น้ำเงิน"),
     ("Cancel", "ยกเลิก"),
-    ("Channel configuration", "การตั้งค่าช่องสัญญาณ"),
     ("Click any paragraph below to edit text inline. Changes auto-save to SQLite.", "คลิกย่อหน้าใดก็ได้เพื่อแก้ไขข้อความ การเปลี่ยนแปลงจะบันทึกลง SQLite อัตโนมัติ"),
     ("Click any paragraph below to edit text inline. Changes auto-save to SQLite.", "คลิกย่อหน้าใดก็ได้เพื่อแก้ไขข้อความ การเปลี่ยนแปลงจะบันทึกลง SQLite อัตโนมัติ"),
     ("Close", "ปิด"),
     ("Collapse sidebar", "ย่อแถบด้านข้าง"),
-    ("Configure Windows WASAPI loopback and microphone capture devices, format, and hardware tests.", "ตั้งค่าอุปกรณ์จับเสียง WASAPI loopback และไมโครโฟน รูปแบบ และการทดสอบฮาร์ดแวร์"),
     ("Configure local OpenThai ASR inference, ONNX Runtime threading, and live streaming behavior.", "ตั้งค่าการถอดเสียง OpenThai ASR ในเครื่อง เธรดของ ONNX Runtime และการสตรีมสด"),
-    ("Configure startup behavior, system tray integration, and global shortcuts.", "ตั้งค่าการเริ่มต้นระบบ ถาดระบบ และคีย์ลัดส่วนกลาง"),
     ("Confirm before deleting recordings", "ยืนยันก่อนลบการบันทึก"),
     ("Connected", "เชื่อมต่อแล้ว"),
     ("Copy", "คัดลอก"),
@@ -125,6 +114,12 @@ const THAI: &[(&str, &str)] = &[
     ("Delete", "ลบ"),
     ("Delete recording", "ลบการบันทึก"),
     ("Delete recording?", "ลบการบันทึกนี้หรือไม่?"),
+    ("Language, behaviour and keyboard shortcuts. The shortcuts work while this window has focus.", "ภาษา การทำงานของแอป และคีย์ลัด คีย์ลัดกดได้เฉพาะตอนที่กำลังใช้หน้าต่างนี้อยู่"),
+    ("Choose the Windows WASAPI capture devices and the sample rate. The two sources are saved as separate files.", "เลือกอุปกรณ์จับเสียงของ Windows (WASAPI) และอัตราการสุ่มตัวอย่าง เสียงจากสองแหล่งจะบันทึกแยกกันคนละไฟล์"),
+    ("Stop recording and quit?", "หยุดอัดแล้วปิดแอปเลยหรือไม่?"),
+    ("The recording stops here and is saved, but not transcribed. To transcribe it, open the app again and choose Transcribe on the Recordings page.", "การอัดจะจบตรงนี้และบันทึกเป็นไฟล์ไว้ แต่ยังไม่ถอดเสียง ถ้าต้องการถอด ให้เปิดแอปอีกครั้งแล้วกด ถอดเสียง ในหน้าการบันทึก"),
+    ("Keep recording", "อัดต่อ"),
+    ("Stop and quit", "หยุดแล้วปิดแอป"),
     ("Destination", "ปลายทาง"),
     ("Disconnected", "ไม่ได้เชื่อมต่อ"),
     ("Duration", "ความยาว"),
@@ -132,7 +127,6 @@ const THAI: &[(&str, &str)] = &[
     ("Enable System Audio recording", "เปิดการบันทึกเสียงระบบ"),
     ("Error", "ผิดพลาด"),
     ("Error · Device lost", "ผิดพลาด · อุปกรณ์หาย"),
-    ("Execution backend (subject to model compatibility).", "ตัวประมวลผล (ขึ้นกับความเข้ากันได้ของโมเดล)"),
     ("Expand sidebar", "ขยายแถบด้านข้าง"),
     ("Export JSON", "ส่งออก JSON"),
     ("Export SRT", "ส่งออก SRT"),
@@ -144,18 +138,15 @@ const THAI: &[(&str, &str)] = &[
     ("General & Shortcuts", "ทั่วไปและคีย์ลัด"),
     ("Go to Recorder", "ไปที่หน้าบันทึก"),
     ("Green", "เขียว"),
-    ("Hardware test is not wired up yet (UI preview)", "การทดสอบฮาร์ดแวร์ยังไม่เชื่อมต่อ (ตัวอย่าง UI)"),
     ("Help", "ช่วยเหลือ"),
     ("Idle", "ว่าง"),
     ("Interface display language (transcription language is set under Transcription).", "ภาษาที่ใช้แสดงผลของแอป (ภาษาถอดเสียงตั้งค่าในหน้าถอดเสียง)"),
     ("Intra-op worker threads allocated to ONNX inference.", "จำนวนเธรดภายใน operator สำหรับการประมวลผล ONNX"),
-    ("Keep running in the Windows notification area when closing the main window.", "ให้แอปทำงานต่อในถาดระบบของ Windows เมื่อปิดหน้าต่างหลัก"),
     ("Keyboard shortcuts", "คีย์ลัด"),
     ("Keyboard shortcuts & Help", "คีย์ลัดและความช่วยเหลือ"),
     ("Language", "ภาษา"),
     ("Last 30 days", "30 วันล่าสุด"),
     ("Last 7 days", "7 วันล่าสุด"),
-    ("Launch Meeting Recorder automatically when signing in to Windows 11.", "เปิด Meeting Recorder อัตโนมัติเมื่อเข้าสู่ระบบ Windows 11"),
     ("Light theme", "ธีมสว่าง"),
     ("Live transcript", "ถอดเสียงสด"),
     ("Local-first Thai speech recognition model.", "โมเดลรู้จำเสียงพูดภาษาไทยที่ทำงานในเครื่อง"),
@@ -163,7 +154,6 @@ const THAI: &[(&str, &str)] = &[
     ("Microphone", "ไมโครโฟน"),
     ("Microphone input stream lost. Reconnect device and click Resume.", "สัญญาณไมโครโฟนขาดหาย เชื่อมต่ออุปกรณ์ใหม่แล้วกดเล่นต่อ"),
     ("Minimize", "ย่อหน้าต่าง"),
-    ("Minimize to system tray", "ย่อลงถาดระบบ"),
     ("Model path", "ตำแหน่งโมเดล"),
     ("No recordings match your search.", "ไม่พบการบันทึกที่ตรงกับคำค้นหา"),
     ("No recordings yet", "ยังไม่มีการบันทึก"),
@@ -195,15 +185,12 @@ const THAI: &[(&str, &str)] = &[
     ("Recording name", "ชื่อการบันทึก"),
     ("Recordings", "การบันทึก"),
     ("Restore", "คืนขนาด"),
-    ("Runtime", "รันไทม์"),
     ("Sample rate", "อัตราการสุ่มตัวอย่าง"),
     ("Search recordings by name...", "ค้นหาการบันทึกตามชื่อ..."),
     ("Search transcript...", "ค้นหาข้อความ..."),
     ("Search transcripts or Thai text (SQLite FTS)...", "ค้นหาข้อความถอดเสียงหรือคำไทย (SQLite FTS)..."),
-    ("Select Dark, Light, or Windows 11 System theme, accent color, and UI font scaling.", "เลือกธีมมืด สว่าง หรือตามระบบ Windows 11 สีเน้น และขนาดตัวอักษร"),
+    ("Select a dark, light or Windows system theme, an accent color and the UI font scale.", "เลือกธีมมืด สว่าง หรือตามระบบ Windows รวมถึงสีเน้นและขนาดตัวอักษร"),
     ("SESSION STATUS", "สถานะเซสชัน"),
-    ("Separate audio tracks preserve System Audio and Microphone independently.", "แยกแทร็กเสียงเพื่อเก็บเสียงระบบและไมโครโฟนเป็นอิสระต่อกัน"),
-    ("Separate tracks (2-ch)", "แยกแทร็ก (2 ช่อง)"),
     ("Settings", "ตั้งค่า"),
     ("Show a confirmation dialog before permanently removing audio files.", "แสดงหน้าต่างยืนยันก่อนลบไฟล์เสียงถาวร"),
     ("Show recordings list", "แสดงรายการบันทึก"),
@@ -215,17 +202,13 @@ const THAI: &[(&str, &str)] = &[
     ("Speaker diarization", "แยกผู้พูด"),
     ("Start / Stop recording", "เริ่ม / หยุดบันทึก"),
     ("Start a new recording session to capture System Audio and\nMicrophone tracks locally on this PC.", "เริ่มเซสชันบันทึกใหม่เพื่อจับเสียงระบบและ\nไมโครโฟนเก็บไว้ในเครื่องนี้"),
-    ("Start with Windows", "เริ่มพร้อม Windows"),
     ("Status", "สถานะ"),
-    ("Stereo mixed", "สเตอริโอรวม"),
     ("Stop", "หยุด"),
     ("Storage", "พื้นที่จัดเก็บ"),
     ("Streaming chunk window", "ช่วงเวลาสตรีมต่อชิ้น"),
     ("Switch Light / Dark theme", "สลับธีมสว่าง / มืด"),
     ("System Audio", "เสียงระบบ"),
     ("System theme", "ธีมระบบ"),
-    ("Test microphone", "ทดสอบไมโครโฟน"),
-    ("Test system audio", "ทดสอบเสียงระบบ"),
     ("The licenses viewer", "ตัวแสดงไลเซนส์"),
     ("This action cannot be undone.", "ไม่สามารถย้อนกลับได้"),
     ("Toggle auto-scroll", "เปิด/ปิดเลื่อนอัตโนมัติ"),
@@ -248,18 +231,18 @@ const THAI: &[(&str, &str)] = &[
     ("Open download page", "เปิดหน้าดาวน์โหลด"),
     ("Could not check for updates.", "ตรวจหาเวอร์ชันใหม่ไม่ได้"),
     ("Weekly", "รายสัปดาห์"),
-    ("Win 11", "Win 11"),
     ("Words", "จำนวนคำ"),
     ("Today", "วันนี้"),
     ("WASAPI active", "WASAPI ทำงานอยู่"),
     ("Windows default", "ค่าเริ่มต้นของ Windows"),
+    ("Using Windows default", "ใช้ค่าเริ่มต้นของ Windows"),
     ("Starting", "กำลังเริ่ม"),
     ("Saved", "บันทึกแล้ว"),
     ("Resume", "ต่อ"),
     ("Ready", "พร้อม"),
     ("Off", "ปิด"),
     ("All system audio", "เสียงทั้งระบบ"),
-    ("Waiting for the meeting app", "รอแอปประชุม"),
+    ("Records everything that plays on this device. Pick the one you hear the meeting on.", "อัดทุกเสียงที่ออกอุปกรณ์นี้ เลือกตัวที่คุณใช้ฟังประชุม"),
     ("Device lost", "อุปกรณ์หลุด"),
     ("Could not start", "เริ่มไม่ได้"),
     ("Recording problem", "การบันทึกมีปัญหา"),
@@ -274,7 +257,6 @@ const THAI: &[(&str, &str)] = &[
     ("Default", "ค่าเริ่มต้น"),
     ("Meeting date", "วันที่ประชุม"),
     ("Show recordings list", "แสดงรายการบันทึก"),
-    ("ONNX Runtime (CPU)", "ONNX Runtime (CPU)"),
     ("Thai (TH)", "ไทย (TH)"),
     ("Delete recording", "ลบการบันทึก"),
     ("Latency", "ความหน่วง"),
@@ -291,7 +273,6 @@ const THAI: &[(&str, &str)] = &[
     (" words", " คำ"),
     ("This will permanently delete ", "การลบนี้จะลบ "),
     (" and its dual-track WAV file from disk. This action cannot be undone.", " และไฟล์ WAV สองแทร็กออกจากดิสก์อย่างถาวร ไม่สามารถย้อนกลับได้"),
-    ("Mono downmix", "โมโนรวม"),
     ("OpenThai ASR · Loading model...", "OpenThai ASR · กำลังโหลดโมเดล..."),
     ("OpenThai ASR · Unavailable", "OpenThai ASR · ใช้งานไม่ได้"),
     ("Loading model...", "กำลังโหลดโมเดล..."),
@@ -347,7 +328,7 @@ const THAI: &[(&str, &str)] = &[
     ("Thai + English", "ไทย + อังกฤษ"),
     ("Where recordings and transcripts are saved.", "ตำแหน่งที่เก็บการบันทึกและข้อความถอดเสียง"),
     ("Each recording has its own folder with the audio tracks (WAV) and, once transcribed, the transcript files.", "การบันทึกแต่ละครั้งมีโฟลเดอร์ของตัวเอง เก็บไฟล์เสียง (WAV) และไฟล์ข้อความเมื่อถอดเสียงแล้ว"),
-    ("Version, updates and open-source licences.", "เวอร์ชัน การอัปเดต และสัญญาอนุญาตโอเพนซอร์ส"),
+    ("Version, updates and open-source licences.", "เวอร์ชัน การอัปเดต และไลเซนส์โอเพนซอร์ส"),
     ("Thai writes every word in Thai letters; Thai + English writes English words in Latin letters.", "ไทย: เขียนทุกคำเป็นอักษรไทย ส่วนไทย + อังกฤษ: เขียนคำภาษาอังกฤษเป็นอักษรละติน"),
     ("Word fixes", "แก้คำอัตโนมัติ"),
     ("One fix per line: what the transcript says = what it should say. Separate several wrong forms with commas. Applies to transcripts made from now on.", "บรรทัดละหนึ่งคู่: คำที่ถอดได้ = คำที่ถูก ใส่คำผิดหลายแบบได้โดยคั่นด้วยจุลภาค ใช้กับข้อความถอดเสียงที่ทำหลังจากนี้"),
@@ -363,7 +344,7 @@ const THAI: &[(&str, &str)] = &[
     ("Loading recordings...", "กำลังโหลดรายการบันทึก..."),
     ("Stop the recording before deleting.", "หยุดการบันทึกก่อนจึงจะลบได้"),
     ("This recording is being transcribed.", "รายการบันทึกนี้กำลังถอดเสียงอยู่"),
-    ("Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.", "สัญญาอนุญาตของไลบรารีและโมเดลเสียง: ไฟล์ THIRD_PARTY_NOTICES.md ในโฟลเดอร์โปรเจกต์"),
+    ("Licences of the libraries, fonts and speech model: Settings > Advanced > Open-source licenses.", "ไลเซนส์ของไลบรารี ฟอนต์ และโมเดลเสียง ดูได้ที่ ตั้งค่า > ขั้นสูง > ไลเซนส์โอเพนซอร์ส"),
 ];
 
 #[cfg(test)]
@@ -444,7 +425,7 @@ mod tests {
             "Loading recordings...",
             "Stop the recording before deleting.",
             "This recording is being transcribed.",
-            "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
+            "Licences of the libraries, fonts and speech model: Settings > Advanced > Open-source licenses.",
         ] {
             assert!(has_thai(key), "missing Thai for {key:?}");
         }
@@ -465,7 +446,6 @@ mod tests {
             tr("Speakers (Realtek(R) Audio)"),
             "Speakers (Realtek(R) Audio)"
         );
-        assert!(not_wired("The licenses viewer").contains("ยังไม่เชื่อมต่อ"));
         assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);

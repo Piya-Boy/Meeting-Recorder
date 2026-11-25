@@ -1,0 +1,4 @@
+# Generated: LF everywhere, so the CI diff check and the embedded copy are the same.
+THIRD_PARTY_LICENSES.txt text eol=lf
+# Third-party texts, kept byte for byte.
+licenses/** -text

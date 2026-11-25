@@ -31,8 +31,40 @@ const LEVEL_STALE: Duration = Duration::from_millis(300);
 const SILENT_DB: f32 = -90.0;
 
 pub struct WorkerConfig {
-    /// How often a lost source or meeting app is looked for again.
+    /// How often a lost source is looked for again.
     pub retry_interval: Duration,
+}
+
+/// What a source that is being captured reports.
+fn capturing(source: Source, on_default: bool) -> SourceStatus {
+    match source {
+        Source::System if on_default => SourceStatus::DefaultOutput,
+        Source::System => SourceStatus::AllSystem,
+        Source::Mic => SourceStatus::Active,
+    }
+}
+
+/// Opens what the user chose. A chosen output device that cannot be opened is stood in for by
+/// the Windows default, which is where Windows, and an app that follows it, send the sound
+/// then; the flag says that this happened. A microphone is never swapped for another one,
+/// which could pick up a room the user did not mean to record.
+fn open_or_default(
+    backend: &dyn Backend,
+    tx: &Sender<Msg>,
+    chosen: &SourceKind,
+    origin: Instant,
+    rate: u32,
+) -> Result<(Box<dyn Stream>, bool), String> {
+    let open = |kind: SourceKind| backend.open(kind, origin, rate, tx.clone());
+    match open(chosen.clone()) {
+        Ok(stream) => Ok((stream, false)),
+        Err(e) if matches!(chosen, SourceKind::WholeSystem { device: Some(_) }) => {
+            open(SourceKind::WholeSystem { device: None })
+                .map(|stream| (stream, true))
+                .map_err(|_| e)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 impl Default for WorkerConfig {
@@ -101,10 +133,11 @@ struct Track {
     writer: WavWriter<std::fs::File>,
     clock: TrackClock,
     stream: Option<Box<dyn Stream>>,
-    /// What the stream was opened as; a lost process source waits for the app, others for
-    /// the device.
+    /// What the user chose. The stream is open on it, except while `on_default`.
     kind: SourceKind,
-    /// Set while the source is lost: when to try again.
+    /// The chosen output device cannot be opened and the Windows default is recorded.
+    on_default: bool,
+    /// Set while the source is lost or on the default: when to try the choice again.
     retry_at: Option<Instant>,
     last_flush: u64,
     level_db: f32,
@@ -124,6 +157,7 @@ impl Track {
 
             stream: None,
             kind,
+            on_default: false,
             retry_at: None,
             last_flush: 0,
             level_db: SILENT_DB,
@@ -315,28 +349,6 @@ impl Worker {
         }
     }
 
-    /// The meeting app's process when one runs (and opens), else the whole system's sound.
-    fn open_system(
-        &self,
-        req: &StartRequest,
-        origin: Instant,
-    ) -> Result<(Box<dyn Stream>, SourceKind, SourceStatus), String> {
-        let open = |kind: SourceKind| {
-            self.backend
-                .open(kind.clone(), origin, req.sample_rate, self.msg_tx.clone())
-                .map(|s| (s, kind))
-        };
-        if let Some(pid) = self.backend.meeting_target() {
-            if let Ok((s, kind)) = open(SourceKind::Process { pid }) {
-                return Ok((s, kind, SourceStatus::Active));
-            }
-        }
-        let (s, kind) = open(SourceKind::WholeSystem {
-            device: req.system_device.clone(),
-        })?;
-        Ok((s, kind, SourceStatus::AllSystemFallback))
-    }
-
     fn start(&mut self, req: StartRequest) {
         if !matches!(
             self.state,
@@ -353,53 +365,30 @@ impl Worker {
         self.transition(Transition::Begin);
         let origin = Instant::now();
 
-        let mut opened: Vec<(Source, Box<dyn Stream>, SourceKind)> = Vec::new();
-        if req.system {
-            match self.open_system(&req, origin) {
-                Ok((s, kind, status)) => {
-                    opened.push((Source::System, s, kind));
-                    self.emit(Event::SourceStatus {
-                        source: Source::System,
-                        status,
-                    });
+        // The system track is everything played on the chosen output device. It is not narrowed
+        // to the meeting app: which source that picked depended on when Record was pressed.
+        let system = SourceKind::WholeSystem {
+            device: req.system_device.clone(),
+        };
+        let mic = SourceKind::Mic {
+            device: req.mic_device.clone(),
+        };
+        let mut opened: Vec<(Source, Box<dyn Stream>, SourceKind, bool)> = Vec::new();
+        for (wanted, kind) in [(req.system, system), (req.mic, mic)] {
+            let source = kind.source();
+            let status = if !wanted {
+                SourceStatus::Disabled
+            } else {
+                match open_or_default(&*self.backend, &self.msg_tx, &kind, origin, req.sample_rate)
+                {
+                    Ok((s, on_default)) => {
+                        opened.push((source, s, kind, on_default));
+                        capturing(source, on_default)
+                    }
+                    Err(e) => SourceStatus::Failed(e),
                 }
-                Err(e) => self.emit(Event::SourceStatus {
-                    source: Source::System,
-                    status: SourceStatus::Failed(e),
-                }),
-            }
-        } else {
-            self.emit(Event::SourceStatus {
-                source: Source::System,
-                status: SourceStatus::Disabled,
-            });
-        }
-        if req.mic {
-            let kind = SourceKind::Mic {
-                device: req.mic_device.clone(),
             };
-
-            match self
-                .backend
-                .open(kind.clone(), origin, req.sample_rate, self.msg_tx.clone())
-            {
-                Ok(s) => {
-                    opened.push((Source::Mic, s, kind));
-                    self.emit(Event::SourceStatus {
-                        source: Source::Mic,
-                        status: SourceStatus::Active,
-                    });
-                }
-                Err(e) => self.emit(Event::SourceStatus {
-                    source: Source::Mic,
-                    status: SourceStatus::Failed(e),
-                }),
-            }
-        } else {
-            self.emit(Event::SourceStatus {
-                source: Source::Mic,
-                status: SourceStatus::Disabled,
-            });
+            self.emit(Event::SourceStatus { source, status });
         }
         if opened.is_empty() {
             self.emit(Event::Error("No audio source could be started".into()));
@@ -410,7 +399,7 @@ impl Worker {
         let dir = match naming::session_dir(&req.base_dir, &naming::local_stamp(), &req.name) {
             Ok(d) => d,
             Err(e) => {
-                for (_, s, _) in opened {
+                for (_, s, ..) in opened {
                     s.stop();
                 }
                 self.emit(Event::Error(format!(
@@ -426,7 +415,7 @@ impl Worker {
         let mut failure = None;
         let mut rest = opened.into_iter();
 
-        for (source, stream, kind) in rest.by_ref() {
+        for (source, stream, kind, on_default) in rest.by_ref() {
             let file = if source == Source::System {
                 "system.wav"
             } else {
@@ -436,6 +425,8 @@ impl Worker {
             match Track::create(&dir, file, req.sample_rate, kind) {
                 Ok(mut t) => {
                     t.stream = Some(stream);
+                    t.on_default = on_default;
+                    t.retry_at = on_default.then(|| Instant::now() + self.cfg.retry_interval);
                     if source == Source::System {
                         system = Some(t);
                     } else {
@@ -450,7 +441,7 @@ impl Worker {
             }
         }
         if let Some(e) = failure {
-            for (_, s, _) in rest {
+            for (_, s, ..) in rest {
                 s.stop();
             }
             for t in [system, mic].into_iter().flatten() {
@@ -497,19 +488,22 @@ impl Worker {
         let Some(t) = self.session.as_mut().and_then(|s| s.track_mut(source)) else {
             return;
         };
+        if t.stream.as_ref().is_some_and(|s| !s.failed()) {
+            return; // the report of a stream that this one has replaced
+        }
         if let Some(stream) = t.stream.take() {
             stream.stop();
         }
+        t.on_default = false;
         t.retry_at = Some(retry_at);
-        let status = match t.kind {
-            SourceKind::Process { .. } => SourceStatus::WaitingForApp,
-            _ => SourceStatus::DeviceLost,
-        };
-        self.emit(Event::SourceStatus { source, status });
+        self.emit(Event::SourceStatus {
+            source,
+            status: SourceStatus::DeviceLost,
+        });
     }
 
-    /// Reopens lost sources whose retry time has come: the mic and a whole-system source on
-    /// their device, a process source on whatever meeting app runs now.
+    /// Once their retry time has come: reopens lost sources, and moves a system track that
+    /// is on the Windows default back to the chosen output device.
     fn retry_lost(&mut self) {
         if !matches!(self.state, SessionState::Recording | SessionState::Paused) {
             return;
@@ -527,33 +521,32 @@ impl Worker {
             if t.retry_at.is_none_or(|at| at > now) {
                 continue;
             }
-            let kind = match &t.kind {
-                SourceKind::Process { .. } => match self.backend.meeting_target() {
-                    Some(pid) => SourceKind::Process { pid },
-                    None => {
-                        t.retry_at = Some(now + self.cfg.retry_interval);
-                        continue;
-                    }
-                },
-                other => other.clone(),
+            let result = if t.on_default && t.stream.is_some() {
+                // Already recording the default: only the chosen device is better.
+                self.backend
+                    .open(t.kind.clone(), origin, rate, self.msg_tx.clone())
+                    .map(|stream| (stream, false))
+            } else {
+                open_or_default(&*self.backend, &self.msg_tx, &t.kind, origin, rate)
             };
-            match self
-                .backend
-                .open(kind.clone(), origin, rate, self.msg_tx.clone())
-            {
-                Ok(stream) => {
-                    t.stream = Some(stream);
-                    t.kind = kind;
-                    t.retry_at = None;
-                    reopened.push(source);
+            match result {
+                Ok((stream, on_default)) => {
+                    // The new stream is open before the old one stops, so nothing falls
+                    // between them; the track's clock drops what both of them heard.
+                    if let Some(old) = t.stream.replace(stream) {
+                        old.stop();
+                    }
+                    t.on_default = on_default;
+                    t.retry_at = on_default.then(|| now + self.cfg.retry_interval);
+                    reopened.push((source, on_default));
                 }
                 Err(_) => t.retry_at = Some(now + self.cfg.retry_interval),
             }
         }
-        for source in reopened {
+        for (source, on_default) in reopened {
             self.emit(Event::SourceStatus {
                 source,
-                status: SourceStatus::Active,
+                status: capturing(source, on_default),
             });
         }
     }
@@ -974,86 +967,45 @@ mod tests {
         }
     }
 
-    fn opened_has(r: &Rig, kind: SourceKind) -> bool {
-        r.fake.opened().contains(&kind)
-    }
-    fn whole() -> SourceKind {
-        SourceKind::WholeSystem { device: None }
-    }
     fn status(source: Source, status: SourceStatus) -> impl Fn(&Event) -> bool {
         move |e| matches!(e, Event::SourceStatus { source: s, status: st } if *s == source && *st == status)
     }
 
     #[test]
-    fn no_meeting_app_falls_back_to_whole_system() {
+    fn the_system_track_records_everything_on_the_chosen_output_device() {
         let mut r = Rig::new();
-        r.start(true, true);
+        let mut req = r.req(true, false);
+        req.system_device = Some("headphones".into());
+        r.h.send(Command::Start(req));
         r.wait(
-            "fallback status",
-            status(Source::System, SourceStatus::AllSystemFallback),
-        );
-        assert!(opened_has(&r, whole()));
-    }
-
-    #[test]
-    fn meeting_app_found_opens_process_source() {
-        let mut r = Rig::new();
-        r.fake.set_target(Some(42));
-        r.start(true, true);
-        r.wait(
-            "system active",
-            status(Source::System, SourceStatus::Active),
+            "all system audio",
+            status(Source::System, SourceStatus::AllSystem),
         );
         r.wait_state(SessionState::Recording);
-        assert!(opened_has(&r, SourceKind::Process { pid: 42 }));
-        assert!(!opened_has(&r, whole()));
-        r.drain();
-        assert!(!r
-            .events
-            .iter()
-            .any(status(Source::System, SourceStatus::AllSystemFallback)));
-    }
-
-    #[test]
-    fn process_open_failure_falls_back_to_whole_system() {
-        let mut r = Rig::new();
-        r.fake.set_target(Some(1));
-        r.fake.fail_open(FailKind::Process);
-        r.start(true, true);
-        r.wait(
-            "fallback status",
-            status(Source::System, SourceStatus::AllSystemFallback),
+        assert_eq!(
+            r.fake.opened(),
+            vec![SourceKind::WholeSystem {
+                device: Some("headphones".into())
+            }]
         );
-        assert!(opened_has(&r, whole()));
     }
 
     #[test]
-    fn fallback_does_not_switch_mid_recording() {
+    fn a_lost_output_device_reopens_and_leaves_a_silent_gap() {
         let mut r = Rig::new();
-        r.start(true, true);
-        r.wait_state(SessionState::Recording);
-        r.fake.set_target(Some(9));
-        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
-        assert!(!opened_has(&r, SourceKind::Process { pid: 9 }));
-    }
-
-    #[test]
-    fn app_exit_waits_then_reattaches() {
-        let mut r = Rig::new();
-        r.fake.set_target(Some(5));
         r.start(true, true);
         r.wait_state(SessionState::Recording);
         r.fake.push(Source::System, 0, tone(48_000, 1));
         r.fake.push(Source::Mic, 0, tone(48_000, 2));
-        r.fake.set_target(None);
         assert!(r.fake.lose(Source::System));
         r.wait(
-            "waiting for app",
-            status(Source::System, SourceStatus::WaitingForApp),
+            "device lost",
+            status(Source::System, SourceStatus::DeviceLost),
         );
-        r.fake.set_target(Some(7));
-        r.wait("reattached", status(Source::System, SourceStatus::Active));
-        assert!(opened_has(&r, SourceKind::Process { pid: 7 }));
+        r.wait(
+            "all system audio again",
+            status(Source::System, SourceStatus::AllSystem),
+        );
         r.fake.push(Source::System, 96_000, tone(48_000, 3));
         r.fake.push(Source::Mic, 48_000, tone(96_000, 4));
         r.h.send(Command::Stop);
@@ -1067,6 +1019,116 @@ mod tests {
             "the gap is silence"
         );
         assert!(sys[96_000..].iter().all(|&s| s == 3));
+    }
+
+    fn output(id: Option<&str>) -> SourceKind {
+        SourceKind::WholeSystem {
+            device: id.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_chosen_output_that_drops_moves_to_the_windows_default_and_back() {
+        let mut r = Rig::new();
+        let mut req = r.req(true, true);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.unplug("speaker");
+        assert!(r.fake.lose(Source::System));
+        r.wait(
+            "device lost",
+            status(Source::System, SourceStatus::DeviceLost),
+        );
+        r.wait(
+            "the Windows default",
+            status(Source::System, SourceStatus::DefaultOutput),
+        );
+        assert_eq!(r.fake.live(Source::System), vec![output(None)]);
+        r.fake.push(Source::System, 96_000, tone(48_000, 3));
+
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output again",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        assert_eq!(
+            r.fake.live(Source::System),
+            vec![output(Some("speaker"))],
+            "the stream on the default is stopped"
+        );
+        // The new stream starts half a second before the old one ended.
+        r.fake.push(Source::System, 120_000, tone(48_000, 5));
+        r.fake.push(Source::Mic, 0, tone(168_000, 2));
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        let sys = read_wav(&dir.join("system.wav"));
+        let mic = read_wav(&dir.join("mic.wav"));
+        assert_eq!(sys.len(), mic.len());
+        assert_eq!(sys.len(), 168_000, "the overlap is not written twice");
+        assert!(sys[48_000..96_000].iter().all(|&s| s == 0));
+        assert!(sys[96_000..144_000].iter().all(|&s| s == 3));
+        assert!(sys[144_000..].iter().all(|&s| s == 5));
+    }
+
+    #[test]
+    fn a_missing_chosen_output_records_the_windows_default_from_the_start() {
+        let mut r = Rig::new();
+        r.fake.unplug("speaker");
+        let mut req = r.req(true, false);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait(
+            "the Windows default",
+            status(Source::System, SourceStatus::DefaultOutput),
+        );
+        r.wait_state(SessionState::Recording);
+        assert_eq!(r.fake.live(Source::System), vec![output(None)]);
+
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        assert_eq!(r.fake.live(Source::System), vec![output(Some("speaker"))]);
+    }
+
+    #[test]
+    fn a_loss_reported_by_a_replaced_stream_leaves_the_new_one_running() {
+        let mut r = Rig::new();
+        r.fake.unplug("speaker");
+        let mut req = r.req(true, false);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        // The stream on the default failed while the chosen one was being opened.
+        assert!(r.fake.report_old_loss(Source::System));
+        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
+        assert_eq!(
+            r.fake.opened(),
+            vec![output(None), output(Some("speaker"))],
+            "the new stream was not stopped and opened again"
+        );
+    }
+
+    #[test]
+    fn a_microphone_is_never_swapped_for_another_one() {
+        let mut r = Rig::new();
+        let mut req = r.req(true, true);
+        req.mic_device = Some("headset".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.unplug("headset");
+        assert!(r.fake.lose(Source::Mic));
+        r.wait("device lost", status(Source::Mic, SourceStatus::DeviceLost));
+        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
+        assert!(!r.fake.opened().contains(&SourceKind::Mic { device: None }));
     }
 
     #[test]

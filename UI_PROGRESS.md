@@ -58,10 +58,9 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Superseded: the early `Segoe UI Bold / Consolas Bold / Leelawadee UI Bold` fix above was replaced by the bundled fonts below.
 - Fonts: Inter (400/500), JetBrains Mono (400/500) and Noto Sans Thai (400/500) are bundled in `assets/fonts` (SIL OFL, licences alongside). PUA glyphs were stripped from Inter/JetBrains cmaps so they do not shadow Phosphor icons. egui has no variable weights, so each weight is its own family (`medium_family` = 400, `bold_family` = 500, `mono_bold_family` = 500). They are one step lighter than Stitch's CSS weights because egui renders text heavier than a browser.
 - Icons: Phosphor (egui-phosphor) substitutes Lucide.
-- Buttons that need a backend (hardware test, folder picker, optimize DB, export diagnostics, …) show a "not wired up yet (UI preview)" toast.
+- A button that has no backend shows a "not wired up yet (UI preview)" toast only in the preview runs (sample data); the real app does not offer it.
 - Frameless: Windows 11 snap-layout flyout on the maximise button is not available (custom button); drag-to-edge snapping and Win+Arrows still work. Window is resizable (min 1200×760); layouts use flexible columns, but only 1280×800 was screenshot-verified.
 - Mock data: exports and the SQLite index do not exist yet. Audio capture, transcription and the Recordings / Transcripts / Detail lists are real (see `TASKS.md`); they are used when the app starts normally or with `--audio`, and other dev-flag runs keep the sample data.
-- Nothing is committed: repo has no commits or remote and the user has not asked for one.
 
 ## Language switching (English / Thai)
 
@@ -80,7 +79,7 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 ## Persistence, shortcuts, focus, engine states, sizes
 
 - Preferences: `src/settings_store.rs` writes `%APPDATA%\MeetingRecorder\settings.ini` (key=value, atomic write, unknown keys ignored) when theme, accent, font scale, language or a general toggle changes. Verified with two real launches.
-- Shortcuts: Ctrl+Shift+R start/stop, P pause/resume, A auto-scroll, C copy transcript (disabled while a modal is open). Verified with real key presses.
+- Shortcuts (while the window has focus): Ctrl+Shift+R start/stop, P pause/resume, A auto-scroll, C copy transcript (disabled while a modal is open). Verified with real key presses.
 - Focus: after Tab a blue ring outlines the focused control (cleared on mouse press); the sidebar logo is only focusable when it expands a collapsed sidebar.
 - Engine: in preview runs a mock `Loading` (1.5 s) to `Ready`, or forced `Error`; in a normal run the state comes from the transcription worker (model missing, downloading, loading, ready, error). Shown as a badge on the Recorder, a notice when unavailable, and a pill in Settings > Transcription.
 - Sizes: checked at 1200x760, 1280x800, maximised, English and Thai. Fixed: timer overlapping the sample-rate label (compact 28px timer when narrow), clipped Thai "Pause" label (now "พัก").
@@ -144,3 +143,21 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Recorder: no free-space figure and no state switcher outside the preview; the empty recording name shows "recording" as a hint; the language pill follows Settings > Transcription.
 - Where this differs from the Stitch design, the app follows what it can really do.
 
+## 2026-11-26 - Open points of v0.0.1
+
+- Settings > General: the "Start with Windows" and "Minimize to system tray" rows are gone; the subtitle says the shortcuts work while the window has focus.
+- Settings > Audio: "Channel configuration" and the two test buttons are gone. Its two switches are the Recorder's switches; both pages lock the switches and device lists while a recording runs.
+- Settings > Transcription: the "Runtime" row is gone.
+- Closing the window during a recording opens "Stop recording and quit?" with "Keep recording" and "Stop and quit".
+- Settings > Advanced > "Open-source licenses" opens a scrolling viewer with the licence texts (up to 680 px wide).
+- All dialogs: the button row is only as tall as its buttons, so a dialog no longer keeps the height of the one before it.
+- System theme follows Windows; the two theme buttons switch away from what is on screen. "Windows 11" is no longer shown.
+- Checked with screenshots of the real exe in Thai (General, Audio, Transcription, Appearance, Advanced, licence viewer, close question, light and System theme) and in English (General, Audio, close question). Not screenshotted: the System theme on a light Windows.
+- Known: egui draws a Thai tone mark over an upper vowel (no text shaping).
+
+## 2026-11-26 - Known limits of v0.0.1
+
+- The source switches, sample rate and live-transcript settings are kept after a restart.
+- Recorder: when the chosen output device cannot be opened, the system source shows "Using Windows default" in the warning colour.
+- Thai: tone marks stacked on an upper vowel are drawn above it. Thai transcript paragraphs have a line height of 1.5 font sizes. This replaces the "Known" line of the section above, except for wrapped text outside the transcripts.
+- Checked with screenshots of the real exe in Thai (preview flags): General, transcript editor, Recorder preview, delete dialog. The "Using Windows default" badge was not screenshotted.

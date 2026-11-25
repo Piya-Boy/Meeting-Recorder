@@ -89,11 +89,12 @@ _Add decisions below._
 - Decision: `wasapi` 0.27.0 (Windows only, `cfg(windows)`), event-driven shared mode with `autoconvert` and a 20 ms buffer; a render device opened as a capture client is the whole-system loopback. `windows-sys` stays for Toolhelp (process list), local time and thread calls. No raw COM fallback was needed.
 - Alternatives: `windows` crate with hand-written COM; `cpal` (no process loopback).
 - Consequences: One extra Windows-only dependency; per-process loopback needs Windows 10 2004 or later (older builds fall back to whole-system). Process loopback opened on this machine (Windows 11 build 26300); capturing a real call is not yet verified.
+- Update (2026-11-26): per-process loopback is no longer used, and the Toolhelp feature of `windows-sys` is gone (see "The system track is the whole chosen output device").
 - References: `src/audio/wasapi_backend.rs`, `Cargo.toml`
 
 ### 2026-11-24 - Per-process loopback with whole-system fallback
 
-- Status: Accepted
+- Status: Superseded (2026-11-26: the system track is the whole chosen output device)
 - Context: The system track should hold the meeting app, not notification sounds or music.
 - Decision: The meeting target is the Zoom.exe / ms-teams.exe / Teams.exe process that has an active audio session, else the lowest PID of those; no meeting process (or a failed open) means whole-system capture with the status "All system audio" on the Recorder. A process source that exits becomes "waiting for the meeting app" and is retried every 2 s.
 - Alternatives: Whole-system only (simple, but records unrelated sounds); ask the user to pick a window.
@@ -183,7 +184,7 @@ _Add decisions below._
 
 ### 2026-11-24 - Open licence gate: model licence and the "Powered by OpenThai ASR" badge
 
-- Status: Proposed (unresolved, blocks any release that bundles or ships the model)
+- Status: Superseded (2026-11-26: closed for builds that do not carry the model)
 - Context: The model is under OpenMDW-1.1 (text in `THIRD_PARTY_NOTICES.md`); the project has its own licence (`LICENSE`). The UI shows a "Powered by OpenThai ASR"-style badge.
 - Decision: None yet. The app only downloads the model onto the user's own computer from the publisher's repository and does not redistribute it. Nobody has checked (1) that OpenMDW-1.1 and the project's licence work together for a release, or (2) whether the model's publisher sets rules for the badge.
 - Alternatives: Ask the publisher; take legal advice; drop the badge.
@@ -316,3 +317,79 @@ _Add decisions below._
 - Consequences: A computer without the redistributable cannot start the app until it is installed.
 - References: `.github/release-notes.md`, `README.md`
 
+### 2026-11-26 - v0.0.1 was published while the model licence and badge gate is open
+
+- Status: Accepted
+- Context: The gate of 2026-11-24 says not to ship the badge as final before the OpenMDW-1.1 compatibility and the publisher's badge rules are checked. The release zip does not contain the model; the app shows OpenThai ASR badges. The owner was told this, the unconnected tray switch and the two silent recordings before publishing.
+- Decision: The owner chose to publish `v0.0.1` as it was.
+- Alternatives: Settle the gate or remove the badge first; keep the Release as a draft.
+- Consequences: The gate is not settled by publishing and stays open. Copies already downloaded cannot be recalled.
+- References: the 2026-11-24 gate entry, `THIRD_PARTY_NOTICES.md`, <https://github.com/Piya-Boy/Meeting-Recorder/releases/tag/v0.0.1>
+
+### 2026-11-26 - A meeting app is captured alone only while it plays sound
+
+- Status: Superseded the same day by "The system track is the whole chosen output device"
+- Correction (2026-11-26): the owner said afterwards that the two recordings named below were of a real Teams call, so the idle-app test does not show why they were silent.
+- Context: A meeting app that was only open became the capture target, even with no audio session. New Teams stays in the background. On this machine, with an idle `ms-teams.exe` and the same test tone, whole-system capture peaked at 21035 of 32767 and capture of Teams alone at 0. The recordings `2026-11-25_1557` and `2026-11-25_1604` have a silent system track, and that Teams process had started at 15:54:59 the same day. That it caused those two files is an inference: what was playing and which status the Recorder showed were not recorded.
+- Decision: A Zoom.exe / ms-teams.exe / Teams.exe tree is the target only if it has an active audio session when recording starts, or when a lost source is reattached; with several, the lowest PID. Otherwise the whole system is captured, with the status "All system audio".
+- Alternatives: Always capture the whole system (cannot lose the meeting, but also records notifications and music, and there is no meeting-only track); make meeting-only capture a setting that is off by default; keep the old rule and warn on screen.
+- Consequences: Pressing Record before joining a call records the whole system for that session. While one app is captured alone (status "Connected"), sound from every other program is not recorded, even if the meeting moves there. An idle meeting app that happens to play a notification at the moment Record is pressed is still picked. Not verified with a real Teams or Zoom call, including whether such a call keeps its audio session active while nobody speaks (if it does not, the track is whole-system).
+- References: `src/audio/procfind.rs`, `src/audio/worker.rs`
+
+### 2026-11-26 - The model licence and badge gate is closed for builds that do not carry the model
+
+- Status: Accepted (decided while carrying out the owner's instruction to fix all open points; the owner can reopen it)
+- Context: Checked on 2026-11-26. The model card of the pinned ONNX revision has the same text as the one at `main`; it and the base model's card (read at `main`, not pinned) both name OpenMDW-1.1. The licence sets conditions only on distributing the Model Materials (keep a copy of the agreement and the notices of origin) and puts no obligation on outputs. In the licence sections of the two cards, and in a search of them for attribution, badge, credit and trademark wording, nothing asks an app that uses the model to show a badge or a credit; the base card says "Nemotron" is an NVIDIA trademark. The app neither ships nor mirrors the model: it downloads it from the publisher and saves its `LICENSE` beside it. It has no "Powered by" badge: status chips name the OpenThai ASR engine and one About sentence says the app uses it. The word "Nemotron" does not appear in `src`.
+- Decision: The gate is closed for the app as it ships. The chips and the About sentence stay.
+- Alternatives: Ask iApp; take legal advice; take the model's name out of the interface.
+- Consequences: This is not legal advice, and nobody asked the publisher. Before any build, installer or mirror carries a model file, include the OpenMDW-1.1 text and the notices of origin that apply, and check again. A new model revision needs the same check.
+- References: <https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming-ONNX> (revision `9f142a43e4d35a422c1c7dac40772ef707387ebc`), <https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming>, `THIRD_PARTY_NOTICES.md`
+
+### 2026-11-26 - Licence texts are generated, committed and checked in CI
+
+- Status: Accepted
+- Context: The `v0.0.1` zip carries no licence text for the linked Rust packages, ONNX Runtime or the three bundled fonts.
+- Decision: `.github/scripts/third_party_licenses.py` (cargo-about 0.9.3, `about.toml`, `about.hbs`) writes `THIRD_PARTY_LICENSES.txt` from `Cargo.lock`, `assets/fonts` and `licenses/onnxruntime`. The file is generated but committed, because the program embeds it; the CI job `licences` fails when it is out of date. Only the licences listed in `about.toml` are accepted. The release zip carries the file, and Settings > Advanced > Open-source licenses shows it.
+- Alternatives: Generate it during every build (needs cargo-about and the network); ship only a list of names.
+- Consequences: A dependency change needs the script run again, and a licence that is not listed fails the job until someone decides on it. The ONNX Runtime texts come from the official NuGet package 1.31.0; it is not proven that the static library `ort` downloads has the same third-party components (`licenses/onnxruntime/SOURCE.md`). Another `ort` version fails the script until the texts are updated.
+- References: `about.toml`, `.github/scripts/third_party_licenses.py`, `.github/workflows/ci.yml`
+
+### 2026-11-26 - Settings that did nothing were removed, and closing during a recording asks
+
+- Status: Accepted
+- Context: "Minimize to system tray" was shown as on and said closing the window kept the app running; closing it ended the recording. "Start with Windows", "Channel configuration", "Runtime", "Test system audio" and "Test microphone" did nothing either.
+- Decision: Remove those controls. While a recording runs, closing the window asks first.
+- Alternatives: Build the tray icon, autostart and the audio tests.
+- Consequences: The app has no tray and does not start with Windows. Their keys in an old `settings.ini` are ignored and are not written again. Any of them can come back as a feature of its own.
+- References: `src/screens/settings/`, `src/settings_store.rs`, `src/app.rs`
+
+### 2026-11-26 - The system track is the whole chosen output device
+
+- Status: Accepted (chosen by the owner)
+- Context: The owner reported that a real meeting in the Teams desktop app on 2026-11-25 gave no sound. Its recordings (`2026-11-25_1557` and `_1604`) have a system track of digital zero. The microphone track is near silent because the owner did not speak. The owner listened on a Bluetooth speaker and pressed Record before joining. A build from before `v0.0.1` made them (the folder names carry the old sample name), and by its code it would capture the running Teams process alone. Why that capture was silent is not known, and it was not reproduced:
+  - In a Teams "Meet now" room, capture of the Teams process tree heard the sounds Teams played, at the same level as loopback of the device that played them. The owner heard only Teams' own sounds, so speech from a second participant was not tested.
+  - With stand-in processes and a quiet tone, tree capture heard both a child that ran before the capture started and one started after it, so a late audio process is unlikely to be the explanation.
+  - The rule in the entry above depends on the moment Record is pressed: in one test Teams played outside a call and was the capture target for that second.
+  - One sound, with Teams the only program playing, went to the laptop speakers and not to the default Bluetooth device.
+- Decision: The system track is always the loopback of the output device chosen under System Audio. The capture of a meeting app's process is removed (process list, audio session scan, "waiting for the meeting app"). The Recorder says under the device list that everything played on that device is recorded, and shows "All system audio" as a normal state.
+- Alternatives: Record the meeting app alone and switch to the whole system when its track stays digital zero while the system has sound, or when its process goes away (more code, still untried in a call, and blind to a call in which only the app's own sounds come through); keep the rule above and test a real call first.
+- Consequences: Music, notifications and other programs on that device are in the system track, and so in the transcript. There is no meeting-only track. Sound that a meeting app plays on another device is not recorded; the SYS meter is the check. A chosen device that cannot be opened is covered by the next entry. A call with another person speaking has not been recorded with this change.
+- References: `src/audio/worker.rs`, `src/audio/wasapi_backend.rs`
+
+### 2026-11-26 - The Windows default stands in for a missing output device
+
+- Status: Accepted (the owner asked for the fix; the choices below were made while the owner was away)
+- Context: A chosen output device was only retried by its ID. When it dropped during a recording, Windows moved the sound to another device and the system track stayed empty. It was worse at the start: with the saved device not connected, the list showed "Windows default", the app still tried the saved ID, and the system source did not start at all.
+- Decision: When the chosen output device cannot be opened, at the start or after it is lost, the system track records the Windows default and the Recorder says "Using Windows default" in the warning colour. The chosen device is tried again every 2 s; when it opens, the new stream starts before the old one stops and the track goes back. The saved choice is not changed. A microphone is never replaced: another microphone could pick up a room the user did not mean to record.
+- Alternatives: Stay on the default until the next recording (after a Bluetooth speaker reconnects, Windows and the meeting app go back to it and the track would be silent again); ask the user during the recording; do the same for the microphone.
+- Consequences: Everything played on the stand-in device is recorded. A meeting app set to a particular speaker may send its sound somewhere other than the Windows default; the SYS meter is still the check. Not covered: with "Windows default" chosen, or while standing in, a change of the Windows default that leaves the old device connected is not followed, because nothing reports a loss. Covered by tests with a fake sound card; not tried with real hardware, so how Windows reports a disconnected Bluetooth device to a loopback stream is unverified.
+- References: `src/audio/worker.rs`, `src/screens/recorder.rs`
+
+### 2026-11-26 - Stacked Thai marks are moved after layout
+
+- Status: Accepted (the owner asked for the fix; the choices below were made while the owner was away)
+- Context: egui 0.31.1 does no text shaping, so a tone mark over an upper vowel is drawn on top of it.
+- Decision: Just before a frame is rendered, move the four vertices of each such mark up until its box meets the box under it. Leave the text as it is. Raise a later line of a text only when its line height is at least 1.45 font sizes, and give Thai transcript paragraphs 1.5.
+- Alternatives: Replace marks with raised private-use characters (the bundled font has no standard ones, and copied or searched text would change); shape text with another engine (a new text path for the whole interface); give all text a taller line (every screen would change its layout); raise every line (at egui's line height a raised mark reads as a sara u of the line above).
+- Consequences: One place covers panels, windows, menus and dialogs. It depends on how epaint 0.31.1 orders the vertices of a row, so the tests must be run when egui is upgraded. Wrapped Thai outside the transcripts keeps the old drawing after its first line. Transcript lines are about a quarter taller. No sideways placement for tall consonants.
+- References: `src/thai_marks.rs`, `src/screens/transcript_detail.rs`, `src/screens/recorder.rs`
