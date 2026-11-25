@@ -16,8 +16,9 @@ fn is_meeting_exe(exe: &str) -> bool {
 }
 
 /// Picks the process to capture: the root of a meeting app's process tree (a matching process
-/// whose parent is not itself a match). With several roots, the first (lowest pid) whose tree
-/// holds a pid in `active_audio` wins, else the lowest pid. `None` when nothing matches.
+/// whose parent is not itself a match) whose tree holds a pid in `active_audio`; with several,
+/// the lowest pid. `None` when no meeting app has audio running, even if one is open: Teams
+/// stays in the background, and capturing only an idle app records silence.
 pub fn pick_target(procs: &[ProcInfo], active_audio: &HashSet<u32>) -> Option<u32> {
     let matches: HashSet<u32> = procs
         .iter()
@@ -30,14 +31,11 @@ pub fn pick_target(procs: &[ProcInfo], active_audio: &HashSet<u32>) -> Option<u3
         .map(|p| p.pid)
         .collect();
     if roots.is_empty() {
-        // Only a parent loop among matches; still capture something.
+        // Only a parent loop among matches.
         roots = matches.iter().copied().collect();
     }
     roots.sort_unstable();
     roots.dedup();
-    if roots.len() <= 1 {
-        return roots.first().copied();
-    }
     let parent: HashMap<u32, u32> = procs.iter().map(|p| (p.pid, p.parent_pid)).collect();
     let in_tree = |root: u32, mut pid: u32| {
         for _ in 0..=procs.len() {
@@ -52,10 +50,8 @@ pub fn pick_target(procs: &[ProcInfo], active_audio: &HashSet<u32>) -> Option<u3
         false
     };
     roots
-        .iter()
-        .copied()
+        .into_iter()
         .find(|&r| active_audio.iter().any(|&a| in_tree(r, a)))
-        .or_else(|| roots.first().copied())
 }
 
 /// Snapshot of the running processes; empty if the snapshot fails.
@@ -118,19 +114,35 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_meeting_app_is_not_a_target() {
+        // Teams left running in the background while something else plays. Capturing only
+        // Teams would record silence.
+        let procs = [
+            pi(200, 1, "ms-teams.exe"),
+            pi(201, 200, "msedgewebview2.exe"),
+            pi(300, 1, "brave.exe"),
+        ];
+        let active: HashSet<u32> = [300].into();
+        assert_eq!(pick_target(&procs, &active), None);
+        assert_eq!(pick_target(&procs, &none()), None);
+    }
+
+    #[test]
     fn single_root_is_returned_not_child() {
         let procs = [
             pi(100, 1, "Zoom.exe"),
             pi(101, 100, "CptHost.exe"),
             pi(102, 100, "Zoom.exe"),
         ];
-        assert_eq!(pick_target(&procs, &none()), Some(100));
+        let active: HashSet<u32> = [101].into();
+        assert_eq!(pick_target(&procs, &active), Some(100));
     }
 
     #[test]
     fn matching_is_case_insensitive() {
-        assert_eq!(pick_target(&[pi(7, 1, "ZOOM.EXE")], &none()), Some(7));
-        assert_eq!(pick_target(&[pi(8, 1, "Ms-Teams.exe")], &none()), Some(8));
+        let active: HashSet<u32> = [7, 8].into();
+        assert_eq!(pick_target(&[pi(7, 1, "ZOOM.EXE")], &active), Some(7));
+        assert_eq!(pick_target(&[pi(8, 1, "Ms-Teams.exe")], &active), Some(8));
     }
 
     #[test]
@@ -140,7 +152,9 @@ mod tests {
             pi(201, 200, "msedgewebview2.exe"),
             pi(202, 200, "msedgewebview2.exe"),
         ];
-        assert_eq!(pick_target(&procs, &none()), Some(200));
+        // The sound comes from a child; the root is what gets captured.
+        let active: HashSet<u32> = [201].into();
+        assert_eq!(pick_target(&procs, &active), Some(200));
     }
 
     #[test]
@@ -155,9 +169,10 @@ mod tests {
     }
 
     #[test]
-    fn lowest_pid_when_none_active() {
+    fn lowest_pid_when_several_are_active() {
         let procs = [pi(200, 1, "Zoom.exe"), pi(100, 1, "Teams.exe")];
-        assert_eq!(pick_target(&procs, &none()), Some(100));
+        let active: HashSet<u32> = [100, 200].into();
+        assert_eq!(pick_target(&procs, &active), Some(100));
     }
 
     #[test]
@@ -167,8 +182,11 @@ mod tests {
             pi(2, 1, "Zoom.exe"),
             pi(3, 3, "Teams.exe"),
         ];
+        // pid 9 is in no tree: the walk ends and nothing is picked.
         let active: HashSet<u32> = [9].into();
-        assert!(pick_target(&procs, &active).is_some());
+        assert_eq!(pick_target(&procs, &active), None);
+        let active: HashSet<u32> = [2].into();
+        assert_eq!(pick_target(&procs, &active), Some(1));
     }
 
     #[cfg(windows)]

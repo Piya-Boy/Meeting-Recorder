@@ -48,7 +48,7 @@ pub trait Backend: Send + Sync + 'static {
         sample_rate: u32,
         tx: Sender<Msg>,
     ) -> Result<Box<dyn Stream>, String>;
-    /// The meeting app process to capture, if one is running.
+    /// The meeting app process to capture, if one is playing sound.
     fn meeting_target(&self) -> Option<u32>;
     /// System render devices (for loopback), then microphones.
     fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>);
