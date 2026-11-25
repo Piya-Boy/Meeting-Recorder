@@ -24,6 +24,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Rust toolchain
+        run: rustup toolchain install
+
       - name: Read the version from Cargo.toml
         shell: pwsh
         run: |

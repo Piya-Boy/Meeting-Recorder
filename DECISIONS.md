@@ -288,3 +288,12 @@ _Add decisions below._
 - Alternatives: Test on Linux too (the audio crate does not build there); `cargo deny` (more rules to maintain for one app); caching with `actions/cache` by hand (more YAML than `Swatinem/rust-cache`); a release build on every pull request (slow; the Release workflow builds on a tag).
 - Consequences: A red audit later means a new advisory or a changed dependency tree and needs a decision, not a retry. The ignore list must be reviewed when `eframe` is updated. Required checks on `main` are a repository setting that is not in the code.
 - References: `.github/workflows/ci.yml`, `.github/dependabot.yml`, `.cargo/audit.toml`
+
+### 2026-11-25 - The Rust toolchain is pinned
+
+- Status: Accepted
+- Context: The first CI run failed in `cargo clippy -D warnings` on the runner: its stable Rust was 1.100 and its clippy has a lint (`chunks_exact_to_as_chunks`) that fires in 72 places, while the code is clean on the 1.96 used here. A floating stable plus denied warnings fails a change that did not cause it.
+- Decision: `rust-toolchain.toml` pins `1.96.0` (minimal profile with clippy and rustfmt). Every workflow job that runs cargo first runs `rustup toolchain install`, which installs the pinned toolchain (rustup 1.28 and later no longer does it on first use). The pin is raised on purpose, together with the lint fixes it brings.
+- Alternatives: Floating stable with `-D warnings` (breaks on every new lint); floating stable without `-D warnings` (no lint gate); fixing the 72 sites for 1.100 now (unrelated churn in audio code that cannot be checked here without installing 1.100).
+- Consequences: Builds are repeatable. Nothing raises the pin by itself (Dependabot does not manage it), so it can go stale; `TASKS.md` lists the bump. Local builds also use 1.96.0.
+- References: `rust-toolchain.toml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
