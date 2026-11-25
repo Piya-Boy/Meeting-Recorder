@@ -1887,6 +1887,7 @@ mod tests {
             "Ready",
             "Off",
             "All system audio",
+            "Records everything that plays on this device. Pick the one you hear the meeting on.",
             "Device lost",
             "Could not start",
             "Recording problem",
