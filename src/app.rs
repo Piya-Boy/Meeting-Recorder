@@ -113,6 +113,8 @@ pub enum Modal {
         name: String,
         dir: Option<std::path::PathBuf>,
     },
+    /// The window was asked to close while a recording runs.
+    QuitWhileRecording,
 }
 
 // ─── Application state ───────────────────────────────────────────────────────
@@ -182,6 +184,8 @@ pub struct AppState {
     saved: Persisted,
     /// True after Tab until the next mouse press: only then is the focus ring drawn.
     keyboard_nav: bool,
+    /// The user chose to quit during a recording, so the next close goes through.
+    quit_confirmed: bool,
 }
 
 impl Default for AppState {
@@ -224,6 +228,7 @@ impl Default for AppState {
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
+            quit_confirmed: false,
         }
     }
 }
@@ -998,6 +1003,32 @@ impl AppState {
         }
     }
 
+    /// Closing the window ends a running recording, so ask first. Called every frame.
+    pub fn handle_close_request(&mut self, ctx: &egui::Context) {
+        use crate::screens::recorder::RecorderState;
+        if self.quit_confirmed || !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        // The preview (no capture worker) records nothing.
+        let recording = self.recorder.audio.is_some()
+            && matches!(
+                self.recorder.state,
+                RecorderState::Starting | RecorderState::Recording | RecorderState::Paused
+            );
+        if recording {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.open_modal = Some(Modal::QuitWhileRecording);
+        }
+    }
+
+    /// Quits during a recording; the capture worker finishes the files while the app exits.
+    pub fn quit_while_recording(&mut self, ctx: &egui::Context) {
+        self.quit_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
     /// App-wide shortcuts listed in Settings > General (Ctrl+Shift+R / P / A / C).
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
@@ -1064,6 +1095,7 @@ impl eframe::App for AppState {
         crate::i18n::set_lang(crate::i18n::lang_from_index(
             self.settings_general.language_idx,
         ));
+        self.handle_close_request(ctx);
         self.sync_audio_settings();
         for event in self.recorder.take_events() {
             self.apply_audio_event(event);
@@ -2832,6 +2864,179 @@ mod tests {
         let text = painted_text(&mut a, Screen::Recorder);
         assert!(shows_label(&text, "Thai + English"), "{text}");
         assert!(!shows_label(&text, "Thai (TH)"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The commands the app sends in one frame of `ui`, with `input` as what Windows reports.
+    fn commands_of(
+        input: egui::RawInput,
+        ui: impl FnMut(&egui::Context),
+    ) -> Vec<egui::ViewportCommand> {
+        let frame = egui::Context::default().run(input, ui);
+        frame
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map_or_else(Vec::new, |v| v.commands.clone())
+    }
+
+    /// What the app sends back in a frame in which Windows asks to close the window.
+    fn answer_to_close(a: &mut AppState) -> Vec<egui::ViewportCommand> {
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .events
+            .push(egui::ViewportEvent::Close);
+        commands_of(input, |ctx| a.handle_close_request(ctx))
+    }
+
+    #[test]
+    fn closing_while_recording_is_held_back_and_asks() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-recording");
+        let mut a = live_app(&base);
+        for state in [
+            RecorderState::Starting,
+            RecorderState::Recording,
+            RecorderState::Paused,
+        ] {
+            a.recorder.state = state;
+            a.open_modal = Some(Modal::Help);
+            let sent = answer_to_close(&mut a);
+            assert!(
+                sent.contains(&egui::ViewportCommand::CancelClose),
+                "{state:?}: {sent:?}"
+            );
+            // A minimized window has to come back, or nobody sees the question.
+            assert!(
+                sent.contains(&egui::ViewportCommand::Minimized(false)),
+                "{state:?}: {sent:?}"
+            );
+            assert!(
+                matches!(a.open_modal, Some(Modal::QuitWhileRecording)),
+                "{state:?}: {:?}",
+                a.open_modal
+            );
+        }
+        let text = painted_text(&mut a, Screen::Recorder);
+        assert!(shows_label(&text, "Stop recording and quit?"), "{text}");
+        assert!(shows_label(&text, "Keep recording"), "{text}");
+        assert!(shows_label(&text, "Stop and quit"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn closing_with_no_recording_running_is_not_held_back() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-idle");
+        let mut a = live_app(&base);
+        // `Processing` is the worker writing the last of the files: quitting waits for it.
+        for state in [
+            RecorderState::Idle,
+            RecorderState::Processing,
+            RecorderState::Saved,
+            RecorderState::Error,
+        ] {
+            a.recorder.state = state;
+            let sent = answer_to_close(&mut a);
+            assert!(
+                !sent.contains(&egui::ViewportCommand::CancelClose),
+                "{state:?}: {sent:?}"
+            );
+            assert!(a.open_modal.is_none(), "{state:?}");
+        }
+        // The preview records nothing, whatever it shows.
+        let mut preview = AppState::default();
+        preview.recorder.state = RecorderState::Recording;
+        assert!(!answer_to_close(&mut preview).contains(&egui::ViewportCommand::CancelClose));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Clicks the painted button labelled `key` in the open modal; returns every command the
+    /// app sent while doing so.
+    fn click_in_modal(a: &mut AppState, key: &str) -> Vec<egui::ViewportCommand> {
+        fn find(shape: &egui::Shape, wanted: &[&str]) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if wanted.contains(&t.galley.job.text.as_str()) => {
+                    Some(t.visual_bounding_rect().center())
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        let wanted = [key, crate::i18n::thai_of(key).unwrap_or(key)];
+        let theme = a.theme();
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+        let mut sent = Vec::new();
+        let mut frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let out = ctx.run(input, |ctx| crate::modals::draw(ctx, a, &theme));
+            if let Some(v) = out.viewport_output.get(&egui::ViewportId::ROOT) {
+                sent.extend(v.commands.clone());
+            }
+            out.shapes
+        };
+        frame(a, Vec::new());
+        let shapes = frame(a, Vec::new());
+        let pos = shapes
+            .iter()
+            .find_map(|c| find(&c.shape, &wanted))
+            .unwrap_or_else(|| panic!("no button {key}"));
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(a, vec![egui::Event::PointerMoved(pos)]);
+        frame(a, vec![button(true)]);
+        frame(a, vec![button(false)]);
+        sent
+    }
+
+    #[test]
+    fn the_quit_question_buttons_do_what_they_say() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-buttons");
+        let mut a = live_app(&base);
+        a.recorder.state = RecorderState::Recording;
+
+        a.open_modal = Some(Modal::QuitWhileRecording);
+        let sent = click_in_modal(&mut a, "Keep recording");
+        assert!(!sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        assert!(a.open_modal.is_none());
+        assert!(
+            answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose),
+            "the next close asks again"
+        );
+
+        let sent = click_in_modal(&mut a, "Stop and quit");
+        assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        assert!(!answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_confirmed_quit_closes_the_window() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-confirmed");
+        let mut a = live_app(&base);
+        a.recorder.state = RecorderState::Recording;
+        let sent = commands_of(egui::RawInput::default(), |ctx| a.quit_while_recording(ctx));
+        assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        // The close that follows must not be held back again.
+        let sent = answer_to_close(&mut a);
+        assert!(
+            !sent.contains(&egui::ViewportCommand::CancelClose),
+            "{sent:?}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

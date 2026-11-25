@@ -38,6 +38,7 @@ pub fn draw(ctx: &Context, state: &mut AppState, theme: &ThemeColors) {
                 Modal::DeleteRecording { id, name, dir } => {
                     delete_body(ui, theme, state, *id, name, dir.clone(), &mut close)
                 }
+                Modal::QuitWhileRecording => quit_body(ui, theme, state, &mut close),
             }
         });
 
@@ -129,6 +130,32 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
     ui.add_space(4.0);
     footer(ui, |ui| {
         if custom_button(ui, theme, None, "Close", ButtonVariant::Secondary).clicked() {
+            *close = true;
+        }
+    });
+}
+
+/// Esc, the scrim and "Keep recording" all leave the recording running.
+fn quit_body(ui: &mut Ui, theme: &ThemeColors, state: &mut AppState, close: &mut bool) {
+    heading(ui, theme, tr("Stop recording and quit?"));
+    ui.add(
+        egui::Label::new(
+            RichText::new(tr(
+                "The recording stops here and is saved, but not transcribed. To transcribe it, open the app again and choose Transcribe on the Recordings page.",
+            ))
+            .size(13.0)
+            .color(theme.on_surface_variant),
+        )
+        .wrap(),
+    );
+    ui.add_space(4.0);
+    footer(ui, |ui| {
+        // right-to-left: primary action first
+        if custom_button(ui, theme, None, "Stop and quit", ButtonVariant::Danger).clicked() {
+            state.quit_while_recording(ui.ctx());
+            *close = true;
+        }
+        if custom_button(ui, theme, None, "Keep recording", ButtonVariant::Secondary).clicked() {
             *close = true;
         }
     });
