@@ -89,11 +89,12 @@ _Add decisions below._
 - Decision: `wasapi` 0.27.0 (Windows only, `cfg(windows)`), event-driven shared mode with `autoconvert` and a 20 ms buffer; a render device opened as a capture client is the whole-system loopback. `windows-sys` stays for Toolhelp (process list), local time and thread calls. No raw COM fallback was needed.
 - Alternatives: `windows` crate with hand-written COM; `cpal` (no process loopback).
 - Consequences: One extra Windows-only dependency; per-process loopback needs Windows 10 2004 or later (older builds fall back to whole-system). Process loopback opened on this machine (Windows 11 build 26300); capturing a real call is not yet verified.
+- Update (2026-11-26): per-process loopback is no longer used, and the Toolhelp feature of `windows-sys` is gone (see "The system track is the whole chosen output device").
 - References: `src/audio/wasapi_backend.rs`, `Cargo.toml`
 
 ### 2026-11-24 - Per-process loopback with whole-system fallback
 
-- Status: Superseded (2026-11-26: a meeting app is captured alone only while it plays sound)
+- Status: Superseded (2026-11-26: the system track is the whole chosen output device)
 - Context: The system track should hold the meeting app, not notification sounds or music.
 - Decision: The meeting target is the Zoom.exe / ms-teams.exe / Teams.exe process that has an active audio session, else the lowest PID of those; no meeting process (or a failed open) means whole-system capture with the status "All system audio" on the Recorder. A process source that exits becomes "waiting for the meeting app" and is retried every 2 s.
 - Alternatives: Whole-system only (simple, but records unrelated sounds); ask the user to pick a window.
@@ -327,7 +328,8 @@ _Add decisions below._
 
 ### 2026-11-26 - A meeting app is captured alone only while it plays sound
 
-- Status: Accepted
+- Status: Superseded the same day by "The system track is the whole chosen output device"
+- Correction (2026-11-26): the owner said afterwards that the two recordings named below were of a real Teams call, so the idle-app test does not show why they were silent.
 - Context: A meeting app that was only open became the capture target, even with no audio session. New Teams stays in the background. On this machine, with an idle `ms-teams.exe` and the same test tone, whole-system capture peaked at 21035 of 32767 and capture of Teams alone at 0. The recordings `2026-11-25_1557` and `2026-11-25_1604` have a silent system track, and that Teams process had started at 15:54:59 the same day. That it caused those two files is an inference: what was playing and which status the Recorder showed were not recorded.
 - Decision: A Zoom.exe / ms-teams.exe / Teams.exe tree is the target only if it has an active audio session when recording starts, or when a lost source is reattached; with several, the lowest PID. Otherwise the whole system is captured, with the status "All system audio".
 - Alternatives: Always capture the whole system (cannot lose the meeting, but also records notifications and music, and there is no meeting-only track); make meeting-only capture a setting that is off by default; keep the old rule and warn on screen.
@@ -361,3 +363,15 @@ _Add decisions below._
 - Consequences: The app has no tray and does not start with Windows. Their keys in an old `settings.ini` are ignored and are not written again. Any of them can come back as a feature of its own.
 - References: `src/screens/settings/`, `src/settings_store.rs`, `src/app.rs`
 
+### 2026-11-26 - The system track is the whole chosen output device
+
+- Status: Accepted (chosen by the owner)
+- Context: The owner reported that a real meeting in the Teams desktop app on 2026-11-25 gave no sound. Its recordings (`2026-11-25_1557` and `_1604`) have a system track of digital zero. The microphone track is near silent because the owner did not speak. The owner listened on a Bluetooth speaker and pressed Record before joining. A build from before `v0.0.1` made them (the folder names carry the old sample name), and by its code it would capture the running Teams process alone. Why that capture was silent is not known, and it was not reproduced:
+  - In a Teams "Meet now" room, capture of the Teams process tree heard the sounds Teams played, at the same level as loopback of the device that played them. The owner heard only Teams' own sounds, so speech from a second participant was not tested.
+  - With stand-in processes and a quiet tone, tree capture heard both a child that ran before the capture started and one started after it, so a late audio process is unlikely to be the explanation.
+  - The rule in the entry above depends on the moment Record is pressed: in one test Teams played outside a call and was the capture target for that second.
+  - One sound, with Teams the only program playing, went to the laptop speakers and not to the default Bluetooth device.
+- Decision: The system track is always the loopback of the output device chosen under System Audio. The capture of a meeting app's process is removed (process list, audio session scan, "waiting for the meeting app"). The Recorder says under the device list that everything played on that device is recorded, and shows "All system audio" as a normal state.
+- Alternatives: Record the meeting app alone and switch to the whole system when its track stays digital zero while the system has sound, or when its process goes away (more code, still untried in a call, and blind to a call in which only the app's own sounds come through); keep the rule above and test a real call first.
+- Consequences: Music, notifications and other programs on that device are in the system track, and so in the transcript. There is no meeting-only track. Sound that a meeting app plays on another device is not recorded; the SYS meter is the check. A call with another person speaking has not been recorded with this change.
+- References: `src/audio/worker.rs`, `src/audio/wasapi_backend.rs`

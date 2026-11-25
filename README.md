@@ -20,7 +20,7 @@ The user interface, recording, transcription, the recording library and exports 
 | Storage (SQLite index, WAV and transcript files) | WAV and transcript files and the library lists are real; no SQLite index |
 | Exports (TXT, SRT, JSON) | Done: written next to the recording and shown in Explorer |
 
-The Recorder captures real audio (system and microphone as separate WAV files), transcribes it after Stop, and the Recordings, Transcripts and Transcript Detail screens list and open the real session folders. Recordings plays a recording (both tracks mixed, play / pause / seek) but has no speed, volume or output-device choice, and editing transcript text is not built; a run with dev flags but without `--audio` still shows sample data. Progress is tracked in [`ROADMAP.md`](ROADMAP.md) and [`TASKS.md`](TASKS.md), and UI details are in [`UI_PROGRESS.md`](UI_PROGRESS.md).
+The Recorder captures real audio (system and microphone as separate WAV files; the system track is everything played on the output device you choose, including other programs), transcribes it after Stop, and the Recordings, Transcripts and Transcript Detail screens list and open the real session folders. Recordings plays a recording (both tracks mixed, play / pause / seek) but has no speed, volume or output-device choice, and editing transcript text is not built; a run with dev flags but without `--audio` still shows sample data. Progress is tracked in [`ROADMAP.md`](ROADMAP.md) and [`TASKS.md`](TASKS.md), and UI details are in [`UI_PROGRESS.md`](UI_PROGRESS.md).
 
 ## Planned capabilities
 
@@ -71,7 +71,7 @@ Get the zip from [Releases](https://github.com/Piya-Boy/Meeting-Recorder/release
 - Before that, check the download against `SHA256SUMS.txt` from the same release: `Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256`.
 - Known problems in the `v0.0.1` zip. They are fixed in the source and not released yet:
   - A source switched off in **Settings > Audio** is still recorded. Set the switches on the **Recorder** page before you press Record.
-  - With Teams or Zoom open, even in the background and silent, the system track can be silent. Quit them completely before you record anything else.
+  - With Teams or Zoom open, even in the background, the system track can be silent, also for a meeting held in that app. Quit them completely (from the tray too), press Record, check that **System Audio** says "All system audio", and only then open the app and join. The **SYS** meter must move while others speak.
   - Closing the window ends a recording without asking. "Minimize to system tray" and several other settings do nothing.
   - The zip lacks the licence texts of the libraries and fonts.
 
