@@ -93,8 +93,10 @@ OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE MODEL
 MATERIALS, THE USE THEREOF OR OTHER DEALINGS THEREIN.
 ```
 
-**Open check:** whether OpenMDW-1.1 is compatible with this project's own licence
-(`LICENSE`), and whether the "Powered by OpenThai
-ASR" badge shown by the app meets any attribution requirement of the model's publisher, have
-**not** been checked. Do not release or redistribute a build that bundles the model until both
-are settled (see `DECISIONS.md`).
+**Licence check (2026-11-26):** the app does not ship or mirror the model, and OpenMDW-1.1
+sets conditions only on distributing the model. Neither the card of this ONNX export nor the
+card of its base model, `iapp/OpenThai2.0-ASR-Streaming`, was found to require a badge or a
+credit in an app that uses the model. The app names OpenThai ASR to say which engine it uses
+and claims no endorsement. This is not legal advice, and the publisher was not asked. A build
+that carries any model file must keep this licence and the model's notices of origin, and must
+be checked again (see `DECISIONS.md`).

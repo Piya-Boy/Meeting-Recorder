@@ -93,7 +93,7 @@ _Add decisions below._
 
 ### 2026-11-24 - Per-process loopback with whole-system fallback
 
-- Status: Accepted
+- Status: Superseded (2026-11-26: a meeting app is captured alone only while it plays sound)
 - Context: The system track should hold the meeting app, not notification sounds or music.
 - Decision: The meeting target is the Zoom.exe / ms-teams.exe / Teams.exe process that has an active audio session, else the lowest PID of those; no meeting process (or a failed open) means whole-system capture with the status "All system audio" on the Recorder. A process source that exits becomes "waiting for the meeting app" and is retried every 2 s.
 - Alternatives: Whole-system only (simple, but records unrelated sounds); ask the user to pick a window.
@@ -183,7 +183,7 @@ _Add decisions below._
 
 ### 2026-11-24 - Open licence gate: model licence and the "Powered by OpenThai ASR" badge
 
-- Status: Proposed (unresolved, blocks any release that bundles or ships the model)
+- Status: Superseded (2026-11-26: closed for builds that do not carry the model)
 - Context: The model is under OpenMDW-1.1 (text in `THIRD_PARTY_NOTICES.md`); the project has its own licence (`LICENSE`). The UI shows a "Powered by OpenThai ASR"-style badge.
 - Decision: None yet. The app only downloads the model onto the user's own computer from the publisher's repository and does not redistribute it. Nobody has checked (1) that OpenMDW-1.1 and the project's licence work together for a release, or (2) whether the model's publisher sets rules for the badge.
 - Alternatives: Ask the publisher; take legal advice; drop the badge.
@@ -324,4 +324,40 @@ _Add decisions below._
 - Alternatives: Settle the gate or remove the badge first; keep the Release as a draft.
 - Consequences: The gate is not settled by publishing and stays open. Copies already downloaded cannot be recalled.
 - References: the 2026-11-24 gate entry, `THIRD_PARTY_NOTICES.md`, <https://github.com/Piya-Boy/Meeting-Recorder/releases/tag/v0.0.1>
+
+### 2026-11-26 - A meeting app is captured alone only while it plays sound
+
+- Status: Accepted
+- Context: A meeting app that was only open became the capture target, even with no audio session. New Teams stays in the background. On this machine, with an idle `ms-teams.exe` and the same test tone, whole-system capture peaked at 21035 of 32767 and capture of Teams alone at 0. The recordings `2026-11-25_1557` and `2026-11-25_1604` have a silent system track, and that Teams process had started at 15:54:59 the same day. That it caused those two files is an inference: what was playing and which status the Recorder showed were not recorded.
+- Decision: A Zoom.exe / ms-teams.exe / Teams.exe tree is the target only if it has an active audio session when recording starts, or when a lost source is reattached; with several, the lowest PID. Otherwise the whole system is captured, with the status "All system audio".
+- Alternatives: Always capture the whole system (cannot lose the meeting, but also records notifications and music, and there is no meeting-only track); make meeting-only capture a setting that is off by default; keep the old rule and warn on screen.
+- Consequences: Pressing Record before joining a call records the whole system for that session. While one app is captured alone (status "Connected"), sound from every other program is not recorded, even if the meeting moves there. An idle meeting app that happens to play a notification at the moment Record is pressed is still picked. Not verified with a real Teams or Zoom call, including whether such a call keeps its audio session active while nobody speaks (if it does not, the track is whole-system).
+- References: `src/audio/procfind.rs`, `src/audio/worker.rs`
+
+### 2026-11-26 - The model licence and badge gate is closed for builds that do not carry the model
+
+- Status: Accepted (decided while carrying out the owner's instruction to fix all open points; the owner can reopen it)
+- Context: Checked on 2026-11-26. The model card of the pinned ONNX revision has the same text as the one at `main`; it and the base model's card (read at `main`, not pinned) both name OpenMDW-1.1. The licence sets conditions only on distributing the Model Materials (keep a copy of the agreement and the notices of origin) and puts no obligation on outputs. In the licence sections of the two cards, and in a search of them for attribution, badge, credit and trademark wording, nothing asks an app that uses the model to show a badge or a credit; the base card says "Nemotron" is an NVIDIA trademark. The app neither ships nor mirrors the model: it downloads it from the publisher and saves its `LICENSE` beside it. It has no "Powered by" badge: status chips name the OpenThai ASR engine and one About sentence says the app uses it. The word "Nemotron" does not appear in `src`.
+- Decision: The gate is closed for the app as it ships. The chips and the About sentence stay.
+- Alternatives: Ask iApp; take legal advice; take the model's name out of the interface.
+- Consequences: This is not legal advice, and nobody asked the publisher. Before any build, installer or mirror carries a model file, include the OpenMDW-1.1 text and the notices of origin that apply, and check again. A new model revision needs the same check.
+- References: <https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming-ONNX> (revision `9f142a43e4d35a422c1c7dac40772ef707387ebc`), <https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming>, `THIRD_PARTY_NOTICES.md`
+
+### 2026-11-26 - Licence texts are generated, committed and checked in CI
+
+- Status: Accepted
+- Context: The `v0.0.1` zip carries no licence text for the linked Rust packages, ONNX Runtime or the three bundled fonts.
+- Decision: `.github/scripts/third_party_licenses.py` (cargo-about 0.9.3, `about.toml`, `about.hbs`) writes `THIRD_PARTY_LICENSES.txt` from `Cargo.lock`, `assets/fonts` and `licenses/onnxruntime`. The file is generated but committed, because the program embeds it; the CI job `licences` fails when it is out of date. Only the licences listed in `about.toml` are accepted. The release zip carries the file, and Settings > Advanced > Open-source licenses shows it.
+- Alternatives: Generate it during every build (needs cargo-about and the network); ship only a list of names.
+- Consequences: A dependency change needs the script run again, and a licence that is not listed fails the job until someone decides on it. The ONNX Runtime texts come from the official NuGet package 1.31.0; it is not proven that the static library `ort` downloads has the same third-party components (`licenses/onnxruntime/SOURCE.md`). Another `ort` version fails the script until the texts are updated.
+- References: `about.toml`, `.github/scripts/third_party_licenses.py`, `.github/workflows/ci.yml`
+
+### 2026-11-26 - Settings that did nothing were removed, and closing during a recording asks
+
+- Status: Accepted
+- Context: "Minimize to system tray" was shown as on and said closing the window kept the app running; closing it ended the recording. "Start with Windows", "Channel configuration", "Runtime", "Test system audio" and "Test microphone" did nothing either.
+- Decision: Remove those controls. While a recording runs, closing the window asks first.
+- Alternatives: Build the tray icon, autostart and the audio tests.
+- Consequences: The app has no tray and does not start with Windows. Their keys in an old `settings.ini` are ignored and are not written again. Any of them can come back as a feature of its own.
+- References: `src/screens/settings/`, `src/settings_store.rs`, `src/app.rs`
 

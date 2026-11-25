@@ -7,7 +7,7 @@ _None._
 ## Next
 
 - [ ] Task: Audio capture acceptance on a real Zoom or Teams call (open items of the audio capture work)
-  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; with Zoom and Teams both open and idle the right one is picked (known risk: lowest PID wins).
+  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; pressing Record during a call captures the meeting app alone (status "Connected"; unverified: whether a call keeps its audio session active while nobody speaks, and if not the track is whole-system); with a meeting app open but silent the status is "All system audio" (done on this machine with an idle Teams); decide whether "Connected" should say that only the meeting app is recorded.
   - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last flush (every 1 s since the preview text work, 5 s before); `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
   - Verification: record the call, then inspect both WAVs; record the result per item here.
 - [ ] Task: Transcription acceptance items that were not run, or only partly (open items of the transcription work)
@@ -119,7 +119,7 @@ _None._
     - PARTIAL download resume, search: see the open task above.
     - NOT RUN 2-minute speech with a clean capture: see the open task above.
   - Not verified: speaker labels on a real call (mic = "You", system = "Others" came from the clip runs, where the clips played through the speakers and the whole-system loopback also caught other PC audio).
-  - Open gate for any release: licence compatibility of the model (OpenMDW-1.1) with this project's licence, and the "Powered by OpenThai ASR" badge (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
+  - Licence gate (model licence and badge): closed on 2026-11-26 for builds that do not carry the model (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
   - Commit: branch `feature/asr-transcription`, PR #3 (open, stacked on #2).
 
 - [x] Task: Recordings, Transcripts and Transcript Detail from real data (branch `feature/library-real-data`; spec `docs/superpowers/specs/2026-11-24-library-real-data-design.md`, plan `docs/superpowers/plans/2026-11-24-library-real-data.md`)
@@ -224,16 +224,24 @@ _None._
   - Checks on the draft's zip: `sha256sum -c` OK; four files, `LICENSE` is PolyForm Noncommercial; the draft's text starts with the install notes; the exe imports the Visual C++ runtime DLLs and has no delay imports. The CI-built exe, started without flags, was screenshotted on the sidebar screens and settings pages. With `USERPROFILE` pointed at a temporary folder: it transcribed a copy of a 16 s recording (6 s wait, 2 lines), and recorded 5.6 s with an empty name (folder `..._recording`, both tracks 269,593 frames, "No speech found"). The test audio was deleted and `settings.ini` restored.
   - Not run: Thai and light-theme screenshots of the two changed settings pages; a computer without the Visual C++ Redistributable; speech spoken into the microphone with the CI-built exe.
 
-- [ ] Task: Connect or remove the controls that do nothing
-  - "Minimize to system tray" is saved but not acted on, is on by default and says closing the window keeps the app running; closing it quits and ends a recording. Fix this one first.
-  - Also not connected: "Start with Windows", "Channel configuration", "Runtime", "Test system audio", "Test microphone", the "Open-source licenses" button. The General page subtitle says "global shortcuts", but the shortcuts work only while the window has focus.
-  - Verification: each control does what its text says, or is gone.
+- [x] Task: Open points after `v0.0.1` (branch `fix/open-release-issues`)
+  - Controls that did nothing: "Start with Windows", "Minimize to system tray", "Channel configuration", "Runtime", "Test system audio" and "Test microphone" are removed; the "Open-source licenses" button opens the licence texts; the General page no longer says "global shortcuts". Closing the window during a recording asks first.
+  - Found on the way, in `v0.0.1`: Settings > Audio had switches of its own that nothing read, so a microphone switched off there was still recorded. Both pages now use one pair of switches, locked while a recording runs.
+  - Silent system track: reproduced and fixed. An idle `ms-teams.exe` was picked as the capture target. With one test tone, whole-system capture peaked at 21035 and capture of Teams alone at 0. A meeting app is now captured alone only while it has an active audio session. Linking this to `2026-11-25_1557` and `_1604` is an inference from the start time of Teams (`DECISIONS.md`).
+  - Licences: the `v0.0.1` zip has no licence text for the Rust packages, ONNX Runtime or the fonts. `THIRD_PARTY_LICENSES.txt` is generated, shipped in the zip and shown in the app. The model and badge gate is closed for builds that do not carry the model (not legal advice).
+  - "Windows 11": the sidebar, the About card, the About dialog and the Appearance page no longer say it. The System theme was always dark; it now follows the Windows setting.
+  - Found on the way: a dialog kept the height of the one shown before it (visible after the licence viewer, which is new on this branch). Fixed.
+  - Verification Evidence: tests were written first and seen to fail; `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` clean; `cargo test --locked` 410 passed, 7 ignored.
+  - Real exe on this machine (temporary profile; `settings.ini` restored and compared after the runs that used the real one): General and Audio without the removed rows; with the microphone switched off in Settings > Audio a recording made only `system.wav`; the close button during a recording asked, the file kept growing (1,686,554 to 2,002,394 bytes in 3 s), "Keep recording" went on, a Windows close message was held back too, and "Stop and quit" closed the app with a finished WAV header; with an idle Teams running, the fixed build showed "All system audio" and saved a system track with a peak of -1.4 dBFS; in Thai: General, Audio, Transcription, Appearance, Advanced, the licence viewer, the close question, the light theme and the System theme; after the dialog fix, About opened after the licence viewer at its normal height.
+  - Not run: the System theme on a light Windows (this Windows is dark and was not changed; covered by unit tests, and `egui-winit` 0.31.1 passes the Windows theme on at start and on change); a real Teams or Zoom call; the CI job `licences` before the first push of this branch.
 
-- [ ] Task: Open points when `v0.0.1` was published
-  - The system track of `2026-11-25_1557` (369 s) and `2026-11-25_1604` (223 s) is zero from start to end and the microphone is close to silent, so both transcripts have no lines. Not known: whether anything was playing. If something was playing through "Headphones (Bluetooth Speaker)", loopback capture on that device does not work. Play sound through it while recording and read the system level.
-  - The model licence and badge gate (`DECISIONS.md`, 2026-11-24) is still open.
-  - "Windows 11" is fixed text in the sidebar footer, the About card and the About dialog; the README also lists Windows 10.
-  - Verification: do each item and record the result here.
+- [ ] Task: Thai marks are drawn on top of each other
+  - egui 0.31.1 does no text shaping: a tone mark above an upper vowel is drawn over it (in "ทั่วไป" the tone mark covers the vowel). Seen on the real exe in the interface; transcript text is drawn the same way. `v0.0.1` has it. `design.md` asks for tone marks to be tested.
+  - Verification: stacked marks are readable in the interface and in a transcript, on screenshots of the real exe.
+
+- [ ] Task: Settings that are not saved
+  - These go back to their defaults at every start: the two source switches, the sample rate, "Partial transcription" and "Streaming chunk window". A microphone switched off is on again after a restart.
+  - Verification: change each, restart the real exe, and see it kept.
 
 ## Rules
 

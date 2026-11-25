@@ -13,17 +13,21 @@ In PowerShell, in the folder that holds the zip, compare the result with the lin
 Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256
 ```
 
-## Not working yet
+## Changed since 0.0.1
 
-These controls are on screen but do nothing yet:
+- A source switched off in **Settings > Audio** is no longer recorded. In 0.0.1 it was.
+- Teams or Zoom open in the background no longer leaves the system track silent. A meeting app is recorded alone only if it is playing sound when you press Record; otherwise the whole system is recorded.
+- Closing the window during a recording asks first.
+- Settings that did nothing are gone, among them "Minimize to system tray" and "Start with Windows".
+- The licence texts of the libraries, fonts and speech model are in the zip and in **Settings > Advanced > Open-source licenses**.
+- The System theme follows Windows.
 
-- **Minimize to system tray** (shown as on): closing the window quits the app, which ends a recording in progress. Keep the window open while you record.
-- **Start with Windows**.
-- **Channel configuration**: the two sources are always saved as separate files.
-- **Test system audio** and **Test microphone**.
-- **Open-source licenses** button: the notices are in `THIRD_PARTY_NOTICES.md` inside the zip.
+## Known limits
 
-Keyboard shortcuts work only while the app window has focus.
+- Keyboard shortcuts work only while the app window has focus.
+- Not tried on a real Teams or Zoom call. While a meeting app is recorded alone (the Recorder says "Connected"), sound from other programs is not recorded.
+- The source switches are on again after a restart.
+- Thai tone marks above an upper vowel are drawn on top of it.
 
 ## Licence
 

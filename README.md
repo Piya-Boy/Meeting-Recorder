@@ -10,7 +10,7 @@ The user interface, recording, transcription, the recording library and exports 
 
 | Area | State |
 |---|---|
-| Ten screens, three modals, toasts, navigation | Done |
+| Ten screens, dialogs, toasts, navigation | Done |
 | Dark and light themes, accent colours, font scaling | Done |
 | English and Thai interface language | Done |
 | Saved preferences, keyboard shortcuts, focus ring | Done |
@@ -38,18 +38,18 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 | Transcripts | Searchable list of transcripts with title, date, duration, word count, a text preview and export buttons (TXT, SRT, JSON) |
 | Transcript detail | Document viewer for a single transcript, with export |
 | Settings | Six pages: General, Audio, Transcription, Storage, Appearance, Advanced |
-| Modals | Help (shortcut list), About, Delete confirmation |
+| Modals | Help (shortcut list), About, Delete confirmation, the question before closing during a recording, open-source licences |
 
 ## Features
 
 - **Frameless window** with a custom title bar, drag, edge and corner resize, minimise, maximise and close, and rounded corners on Windows 11. Minimum size is 1200 x 760.
-- **Themes:** dark, light and system, with three accent colours and four font scales. Light theme uses darker text-only colours for legibility.
+- **Themes:** dark, light and system (follows the Windows setting), with three accent colours and four font scales. Light theme uses darker text-only colours for legibility.
 - **Languages:** the whole interface switches between English and Thai from Settings > General. Text without a Thai translation falls back to English.
 - **Update check:** once a day (Settings > General, can be turned off) and from Settings > Advanced the app asks GitHub Releases whether a newer version exists and says so; it does not install anything.
 - **Fonts:** Inter, JetBrains Mono and Noto Sans Thai are bundled, so Thai renders correctly on any machine.
-- **Preferences** (theme, accent, font scale, language and the general toggles) are saved when they change and restored on the next launch.
-- **Keyboard:** global shortcuts and a visible focus ring when navigating with Tab.
-- **Engine states:** the transcription engine shows loading, ready and unavailable states on the Recorder and in Settings > Transcription. The loading step is simulated for now.
+- **Preferences** (theme, accent, font scale, language and the general toggles) are saved when they change and restored on the next launch. The source switches, the sample rate and the two live-transcript settings are not saved yet.
+- **Keyboard:** shortcuts that work while the app window has focus, and a visible focus ring when navigating with Tab.
+- **Engine states:** the transcription engine shows loading, ready and unavailable states on the Recorder and in Settings > Transcription.
 
 ### Keyboard shortcuts
 
@@ -69,7 +69,13 @@ Get the zip from [Releases](https://github.com/Piya-Boy/Meeting-Recorder/release
 - Windows 10 or 11, 64-bit, with the [Microsoft Visual C++ Redistributable 2015-2022 (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe). Many computers already have it; install it if Windows reports that `MSVCP140.dll` or `VCRUNTIME140.dll` is missing.
 - The program is not code-signed, so Windows SmartScreen may warn on the first run: **More info**, then **Run anyway**.
 - Before that, check the download against `SHA256SUMS.txt` from the same release: `Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256`.
-- Not working yet: **Minimize to system tray** (closing the window quits the app and ends a recording in progress), **Start with Windows**, **Channel configuration**, the two audio test buttons and the licences viewer.
+- Known problems in the `v0.0.1` zip. They are fixed in the source and not released yet:
+  - A source switched off in **Settings > Audio** is still recorded. Set the switches on the **Recorder** page before you press Record.
+  - With Teams or Zoom open, even in the background and silent, the system track can be silent. Quit them completely before you record anything else.
+  - Closing the window ends a recording without asking. "Minimize to system tray" and several other settings do nothing.
+  - The zip lacks the licence texts of the libraries and fonts.
+
+The program includes other people's work: see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and `THIRD_PARTY_LICENSES.txt`. The second file is generated; after a dependency change run `python .github/scripts/third_party_licenses.py` (needs `cargo-about` 0.9.3: `cargo install cargo-about --version 0.9.3 --locked --features cli`).
 
 ## Requirements
 
