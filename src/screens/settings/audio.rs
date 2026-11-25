@@ -5,6 +5,7 @@ use crate::audio::session::DeviceInfo;
 use crate::components::button::{custom_button, ButtonVariant};
 use crate::components::select::dropdown;
 use crate::components::toggle::toggle_switch;
+use crate::screens::recorder::RecorderScreen;
 use crate::theme::ThemeColors;
 use crate::toast;
 
@@ -127,30 +128,21 @@ pub fn device_dropdown(
 const SAMPLE_RATES: [&str; 3] = ["48,000 Hz", "44,100 Hz", "16,000 Hz"];
 const CHANNELS: [&str; 3] = ["Separate tracks (2-ch)", "Stereo mixed", "Mono downmix"];
 
+#[derive(Default)]
 pub struct SettingsAudioScreen {
-    pub sys_audio_enabled: bool,
-    pub mic_enabled: bool,
     pub sample_rate_idx: usize,
     pub channel_idx: usize,
-}
-
-impl Default for SettingsAudioScreen {
-    fn default() -> Self {
-        Self {
-            sys_audio_enabled: true,
-            mic_enabled: true,
-            sample_rate_idx: 0,
-            channel_idx: 0,
-        }
-    }
 }
 
 pub fn draw_settings_audio(
     ui: &mut Ui,
     screen: &mut SettingsAudioScreen,
     choice: &mut AudioChoice,
+    // The two source switches are the Recorder page's own, so both pages show one setting.
+    recorder: &mut RecorderScreen,
     theme: &ThemeColors,
 ) {
+    let locked = recorder.sources_locked();
     page(
         ui,
         theme,
@@ -164,7 +156,7 @@ pub fn draw_settings_audio(
                 "Enable System Audio recording",
                 "sys_device",
                 (&choice.system_labels(), choice.system_index()),
-                &mut screen.sys_audio_enabled,
+                (&mut recorder.sys_audio_enabled, locked),
                 "Test system audio",
             );
             if let Some(i) = picked {
@@ -177,7 +169,7 @@ pub fn draw_settings_audio(
                 "Enable Microphone recording",
                 "mic_device",
                 (&choice.mic_labels(), choice.mic_index()),
-                &mut screen.mic_enabled,
+                (&mut recorder.mic_enabled, locked),
                 "Test microphone",
             );
             if let Some(i) = picked {
@@ -214,7 +206,7 @@ fn device_card(
     title: &str,
     id: &str,
     (labels, current): (&[String], usize),
-    enabled: &mut bool,
+    (enabled, locked): (&mut bool, bool),
     test_label: &str,
 ) -> Option<usize> {
     let mut picked = None;
@@ -230,10 +222,13 @@ fn device_card(
                     .color(theme.on_surface),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if locked {
+                    ui.disable();
+                }
                 toggle_switch(ui, theme, enabled);
             });
         });
-        ui.add_enabled_ui(*enabled, |ui| {
+        ui.add_enabled_ui(*enabled && !locked, |ui| {
             // Right-to-left: the test button hugs the card edge, the dropdown takes the rest.
             let row_size = egui::vec2(ui.available_width(), 36.0);
             ui.allocate_ui_with_layout(

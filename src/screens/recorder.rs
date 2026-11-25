@@ -256,6 +256,12 @@ impl RecorderScreen {
         }
     }
 
+    /// A running recording keeps the sources and devices it started with, so their controls
+    /// are locked until it ends. The preview records nothing and stays free.
+    pub fn sources_locked(&self) -> bool {
+        self.audio.is_some() && self.state.session_active()
+    }
+
     /// Takes over the settings that the next `Start` needs.
     pub fn sync_capture(&mut self, sample_rate: u32, system: Option<String>, mic: Option<String>) {
         self.capture_rate = sample_rate;
@@ -1008,6 +1014,7 @@ fn draw_audio_sources_card(
     choice: &mut AudioChoice,
 ) {
     let live = screen.audio.is_some();
+    let locked = screen.sources_locked();
     // The meters show the mock levels in preview mode, real ones only while capturing.
     let meters_on = !live
         || matches!(
@@ -1057,22 +1064,27 @@ fn draw_audio_sources_card(
                         source_badge(theme, live, screen.sys_status.as_ref(), false);
                     ui.label(RichText::new(text).size(11.0).color(color));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if locked {
+                            ui.disable();
+                        }
                         toggle_switch(ui, theme, &mut screen.sys_audio_enabled);
                     });
                 });
 
                 let width = ui.available_width();
                 let labels = choice.system_labels();
-                if let Some(i) = device_dropdown(
-                    ui,
-                    theme,
-                    "sys_device",
-                    &labels,
-                    choice.system_index(),
-                    width,
-                ) {
-                    choice.select_system(i);
-                }
+                ui.add_enabled_ui(!locked, |ui| {
+                    if let Some(i) = device_dropdown(
+                        ui,
+                        theme,
+                        "sys_device",
+                        &labels,
+                        choice.system_index(),
+                        width,
+                    ) {
+                        choice.select_system(i);
+                    }
+                });
 
                 audio_level_meter(
                     ui,
@@ -1113,17 +1125,22 @@ fn draw_audio_sources_card(
                             .color(mic_status_color),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if locked {
+                            ui.disable();
+                        }
                         toggle_switch(ui, theme, &mut screen.mic_enabled);
                     });
                 });
 
                 let width = ui.available_width();
                 let labels = choice.mic_labels();
-                if let Some(i) =
-                    device_dropdown(ui, theme, "mic_device", &labels, choice.mic_index(), width)
-                {
-                    choice.select_mic(i);
-                }
+                ui.add_enabled_ui(!locked, |ui| {
+                    if let Some(i) =
+                        device_dropdown(ui, theme, "mic_device", &labels, choice.mic_index(), width)
+                    {
+                        choice.select_mic(i);
+                    }
+                });
 
                 audio_level_meter(
                     ui,

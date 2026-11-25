@@ -1292,6 +1292,7 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
             ui,
             &mut state.settings_audio,
             &mut state.audio_choice,
+            &mut state.recorder,
             theme,
         ),
         Screen::SettingsTranscription => {
@@ -3020,6 +3021,129 @@ mod tests {
         let sent = click_in_modal(&mut a, "Stop and quit");
         assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
         assert!(!answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Clicks the switch on the same row as the first painted text that ends in `label`.
+    fn click_switch(a: &mut AppState, screen: Screen, label: &str) {
+        fn flatten<'a>(shape: &'a egui::Shape, out: &mut Vec<&'a egui::Shape>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| flatten(s, out)),
+                other => out.push(other),
+            }
+        }
+        a.current_screen = screen;
+        let theme = a.theme();
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 2400.0));
+        let frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(rect),
+                events,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+            })
+            .shapes
+        };
+        frame(a, Vec::new());
+        let painted = frame(a, Vec::new());
+        let mut shapes = Vec::new();
+        painted.iter().for_each(|c| flatten(&c.shape, &mut shapes));
+        let thai = crate::i18n::thai_of(label);
+        let row = shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Text(t) => {
+                    let text = &t.galley.job.text;
+                    (text.ends_with(label) || thai.is_some_and(|th| text.ends_with(th)))
+                        .then(|| t.visual_bounding_rect().center().y)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no text {label} on {screen:?}"));
+        let pos = shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Rect(r)
+                    if (r.rect.width() - 36.0).abs() < 0.5
+                        && (r.rect.height() - 20.0).abs() < 0.5
+                        && (r.rect.center().y - row).abs() < 14.0 =>
+                {
+                    Some(r.rect.center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no switch next to {label} on {screen:?}"));
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(a, vec![egui::Event::PointerMoved(pos)]);
+        frame(a, vec![button(true)]);
+        frame(a, vec![button(false)]);
+    }
+
+    /// What the next recording would capture: (system sound, microphone).
+    fn next_sources(a: &AppState) -> (bool, bool) {
+        let request = a.recorder.start_request();
+        (request.system, request.mic)
+    }
+
+    #[test]
+    fn the_audio_settings_switches_decide_what_is_recorded() {
+        let base = library_dir("app-settings-sources");
+        let mut a = live_app(&base);
+        assert_eq!(next_sources(&a), (true, true));
+        click_switch(&mut a, Screen::SettingsAudio, "Enable Microphone recording");
+        assert_eq!(next_sources(&a), (true, false));
+        click_switch(
+            &mut a,
+            Screen::SettingsAudio,
+            "Enable System Audio recording",
+        );
+        assert_eq!(next_sources(&a), (false, false));
+        // The Recorder page shows the same two switches.
+        click_switch(&mut a, Screen::Recorder, "Microphone");
+        assert_eq!(next_sources(&a), (false, true));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn source_switches_are_locked_while_a_recording_runs() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-sources-locked");
+        let mut a = live_app(&base);
+        for state in [
+            RecorderState::Starting,
+            RecorderState::Recording,
+            RecorderState::Paused,
+            RecorderState::Processing,
+        ] {
+            // A running recording keeps the sources it started with, so a switch that moved
+            // would claim something false.
+            for (screen, label) in [
+                (Screen::Recorder, "System Audio"),
+                (Screen::Recorder, "Microphone"),
+                (Screen::SettingsAudio, "Enable System Audio recording"),
+                (Screen::SettingsAudio, "Enable Microphone recording"),
+            ] {
+                a.recorder.state = state;
+                click_switch(&mut a, screen, label);
+                assert_eq!(
+                    next_sources(&a),
+                    (true, true),
+                    "{state:?} {screen:?} {label}"
+                );
+            }
+        }
+        a.recorder.state = RecorderState::Saved;
+        click_switch(&mut a, Screen::Recorder, "Microphone");
+        assert_eq!(next_sources(&a), (true, false));
         let _ = std::fs::remove_dir_all(&base);
     }
 
