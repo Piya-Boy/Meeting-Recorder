@@ -10,14 +10,13 @@ use super::session::{DeviceInfo, Source};
 pub enum SourceKind {
     Mic { device: Option<String> },
     WholeSystem { device: Option<String> },
-    Process { pid: u32 },
 }
 
 impl SourceKind {
     pub fn source(&self) -> Source {
         match self {
             SourceKind::Mic { .. } => Source::Mic,
-            SourceKind::WholeSystem { .. } | SourceKind::Process { .. } => Source::System,
+            SourceKind::WholeSystem { .. } => Source::System,
         }
     }
 }
@@ -48,8 +47,6 @@ pub trait Backend: Send + Sync + 'static {
         sample_rate: u32,
         tx: Sender<Msg>,
     ) -> Result<Box<dyn Stream>, String>;
-    /// The meeting app process to capture, if one is running.
-    fn meeting_target(&self) -> Option<u32>;
     /// System render devices (for loopback), then microphones.
     fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>);
 }
@@ -67,14 +64,12 @@ mod fake {
     pub(crate) enum FailKind {
         Mic,
         WholeSystem,
-        Process,
     }
 
     #[derive(Default)]
     struct State {
         opened: Vec<SourceKind>,
         fail: Vec<FailKind>,
-        target: Option<u32>,
         txs: HashMap<usize, (u64, Sender<Msg>)>,
         next_gen: u64,
         devices: (Vec<DeviceInfo>, Vec<DeviceInfo>),
@@ -87,8 +82,7 @@ mod fake {
         }
     }
 
-    /// Lets a test push chunks per source, set the meeting target, make opens fail and see
-    /// what was opened.
+    /// Lets a test push chunks per source, make opens fail and see what was opened.
     #[derive(Clone, Default)]
     pub(crate) struct FakeBackend {
         state: Arc<Mutex<State>>,
@@ -100,9 +94,6 @@ mod fake {
         }
         pub(crate) fn fail_open(&self, kind: FailKind) {
             self.state.lock().unwrap().fail.push(kind);
-        }
-        pub(crate) fn set_target(&self, pid: Option<u32>) {
-            self.state.lock().unwrap().target = pid;
         }
         pub(crate) fn set_devices(&self, system: Vec<DeviceInfo>, mic: Vec<DeviceInfo>) {
             self.state.lock().unwrap().devices = (system, mic);
@@ -161,7 +152,6 @@ mod fake {
             let fails = match kind {
                 SourceKind::Mic { .. } => FailKind::Mic,
                 SourceKind::WholeSystem { .. } => FailKind::WholeSystem,
-                SourceKind::Process { .. } => FailKind::Process,
             };
             if st.fail.contains(&fails) {
                 return Err(format!("fake open failure: {fails:?}"));
@@ -176,10 +166,6 @@ mod fake {
                 slot,
                 generation,
             }))
-        }
-
-        fn meeting_target(&self) -> Option<u32> {
-            self.state.lock().unwrap().target
         }
 
         fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>) {

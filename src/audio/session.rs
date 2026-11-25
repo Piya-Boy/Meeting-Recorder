@@ -55,8 +55,8 @@ pub enum Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceStatus {
     Active,
-    AllSystemFallback,
-    WaitingForApp,
+    /// The system track: everything that plays on the chosen output device.
+    AllSystem,
     DeviceLost,
     Disabled,
     Failed(String),

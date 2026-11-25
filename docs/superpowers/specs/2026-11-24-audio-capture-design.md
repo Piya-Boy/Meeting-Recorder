@@ -1,5 +1,7 @@
 # Audio capture (WASAPI, dual track) design
 
+> Superseded in part (2026-11-26): the capture of a meeting app's process described here was removed. The system track is the whole chosen output device (`DECISIONS.md`).
+
 Status: implemented on branch `feature/audio-capture` (PR #2). Acceptance on a real Zoom/Teams call is still open; see `TASKS.md`.
 
 ## Intent and why

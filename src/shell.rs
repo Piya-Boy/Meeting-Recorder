@@ -126,7 +126,7 @@ pub fn draw_sidebar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(12.0);
                         ui.label(
-                            RichText::new("Windows 11")
+                            RichText::new("Windows")
                                 .size(11.0)
                                 .color(theme.on_surface_variant),
                         );
@@ -308,7 +308,7 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Theme toggle
-            let theme_icon = if state.theme_mode == ThemeMode::Light {
+            let theme_icon = if theme.is_light() {
                 egui_phosphor::regular::MOON
             } else {
                 egui_phosphor::regular::SUN
@@ -328,7 +328,7 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                 .on_hover_text(tr("Switch Light / Dark theme"))
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if toggle.clicked() {
-                state.theme_mode = if state.theme_mode == ThemeMode::Light {
+                state.theme_mode = if theme.is_light() {
                     ThemeMode::Dark
                 } else {
                     ThemeMode::Light
@@ -411,7 +411,7 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
 }
 
 fn theme_toggle(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
-    let theme_icon = if state.theme_mode == ThemeMode::Light {
+    let theme_icon = if theme.is_light() {
         egui_phosphor::regular::MOON
     } else {
         egui_phosphor::regular::SUN
@@ -431,7 +431,7 @@ fn theme_toggle(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
         .on_hover_text(tr("Switch Light / Dark theme"))
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if toggle.clicked() {
-        state.theme_mode = if state.theme_mode == ThemeMode::Light {
+        state.theme_mode = if theme.is_light() {
             ThemeMode::Dark
         } else {
             ThemeMode::Light

@@ -113,6 +113,10 @@ pub enum Modal {
         name: String,
         dir: Option<std::path::PathBuf>,
     },
+    /// The window was asked to close while a recording runs.
+    QuitWhileRecording,
+    /// The licence texts of everything the program ships.
+    Licenses,
 }
 
 // ─── Application state ───────────────────────────────────────────────────────
@@ -182,6 +186,8 @@ pub struct AppState {
     saved: Persisted,
     /// True after Tab until the next mouse press: only then is the focus ring drawn.
     keyboard_nav: bool,
+    /// The user chose to quit during a recording, so the next close goes through.
+    quit_confirmed: bool,
 }
 
 impl Default for AppState {
@@ -224,6 +230,7 @@ impl Default for AppState {
             persist: false,
             saved: Persisted::default(),
             keyboard_nav: false,
+            quit_confirmed: false,
         }
     }
 }
@@ -309,8 +316,6 @@ impl AppState {
         self.settings_appearance.accent_idx = saved.accent_idx;
         self.settings_appearance.font_scale_idx = saved.font_scale_idx;
         self.settings_general.language_idx = saved.language_idx;
-        self.settings_general.start_with_windows = saved.start_with_windows;
-        self.settings_general.minimize_to_tray = saved.minimize_to_tray;
         self.settings_general.confirm_delete = saved.confirm_delete;
         self.audio_choice.system_id = saved.system_device;
         self.audio_choice.mic_id = saved.mic_device;
@@ -331,8 +336,6 @@ impl AppState {
             accent_idx: self.settings_appearance.accent_idx,
             font_scale_idx: self.settings_appearance.font_scale_idx,
             language_idx: self.settings_general.language_idx,
-            start_with_windows: self.settings_general.start_with_windows,
-            minimize_to_tray: self.settings_general.minimize_to_tray,
             confirm_delete: self.settings_general.confirm_delete,
             system_device: self.audio_choice.system_id.clone(),
             mic_device: self.audio_choice.mic_id.clone(),
@@ -998,6 +1001,32 @@ impl AppState {
         }
     }
 
+    /// Closing the window ends a running recording, so ask first. Called every frame.
+    pub fn handle_close_request(&mut self, ctx: &egui::Context) {
+        use crate::screens::recorder::RecorderState;
+        if self.quit_confirmed || !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        // The preview (no capture worker) records nothing.
+        let recording = self.recorder.audio.is_some()
+            && matches!(
+                self.recorder.state,
+                RecorderState::Starting | RecorderState::Recording | RecorderState::Paused
+            );
+        if recording {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.open_modal = Some(Modal::QuitWhileRecording);
+        }
+    }
+
+    /// Quits during a recording; the capture worker finishes the files while the app exits.
+    pub fn quit_while_recording(&mut self, ctx: &egui::Context) {
+        self.quit_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
     /// App-wide shortcuts listed in Settings > General (Ctrl+Shift+R / P / A / C).
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
@@ -1054,8 +1083,8 @@ impl AppState {
         );
     }
 
-    fn theme(&self) -> ThemeColors {
-        ThemeColors::get(self.theme_mode).with_accent(self.settings_appearance.accent_idx)
+    fn theme(&self, system: Option<egui::Theme>) -> ThemeColors {
+        ThemeColors::get(self.theme_mode, system).with_accent(self.settings_appearance.accent_idx)
     }
 }
 
@@ -1064,6 +1093,7 @@ impl eframe::App for AppState {
         crate::i18n::set_lang(crate::i18n::lang_from_index(
             self.settings_general.language_idx,
         ));
+        self.handle_close_request(ctx);
         self.sync_audio_settings();
         for event in self.recorder.take_events() {
             self.apply_audio_event(event);
@@ -1110,7 +1140,7 @@ impl eframe::App for AppState {
         if self.open_modal.is_none() {
             self.handle_shortcuts(ctx);
         }
-        let theme = self.theme();
+        let theme = self.theme(ctx.system_theme());
         apply_theme(ctx, &theme);
         let zoom = self.settings_appearance.zoom_factor();
         if (ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
@@ -1260,6 +1290,7 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
             ui,
             &mut state.settings_audio,
             &mut state.audio_choice,
+            &mut state.recorder,
             theme,
         ),
         Screen::SettingsTranscription => {
@@ -1272,7 +1303,12 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
             theme,
             &mut state.theme_mode,
         ),
-        Screen::SettingsAdvanced => draw_settings_advanced(ui, &mut state.settings_advanced, theme),
+        Screen::SettingsAdvanced => {
+            draw_settings_advanced(ui, &mut state.settings_advanced, theme);
+            if std::mem::take(&mut state.settings_advanced.licenses_requested) {
+                state.open_modal = Some(Modal::Licenses);
+            }
+        }
         _ => {}
     }
 }
@@ -2734,7 +2770,7 @@ mod tests {
             }
         }
         a.current_screen = screen;
-        let theme = a.theme();
+        let theme = a.theme(None);
         let ctx = egui::Context::default();
         crate::theme::configure_fonts(&ctx);
         let input = egui::RawInput {
@@ -2748,6 +2784,9 @@ mod tests {
         // The first frame only sizes some widgets; the second is what the user sees.
         for _ in 0..2 {
             let frame = ctx.run(input.clone(), |ctx| {
+                egui::SidePanel::left("sidebar")
+                    .exact_width(220.0)
+                    .show(ctx, |ui| shell::draw_sidebar(ui, a, &theme));
                 egui::TopBottomPanel::top("topbar")
                     .show(ctx, |ui| shell::draw_topbar(ui, a, &theme));
                 egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
@@ -2768,6 +2807,15 @@ mod tests {
         let thai = crate::i18n::thai_of(key);
         text.lines()
             .any(|l| l.ends_with(key) || thai.is_some_and(|t| l.ends_with(t)))
+    }
+
+    #[test]
+    fn the_recorder_page_says_what_the_system_track_records() {
+        let base = library_dir("app-system-hint");
+        let text = painted_text(&mut live_app(&base), Screen::Recorder);
+        let hint = "Records everything that plays on this device. \
+                    Pick the one you hear the meeting on.";
+        assert!(shows_label(&text, hint), "{text}");
     }
 
     #[test]
@@ -2832,6 +2880,480 @@ mod tests {
         let text = painted_text(&mut a, Screen::Recorder);
         assert!(shows_label(&text, "Thai + English"), "{text}");
         assert!(!shows_label(&text, "Thai (TH)"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The commands the app sends in one frame of `ui`, with `input` as what Windows reports.
+    fn commands_of(
+        input: egui::RawInput,
+        ui: impl FnMut(&egui::Context),
+    ) -> Vec<egui::ViewportCommand> {
+        let frame = egui::Context::default().run(input, ui);
+        frame
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map_or_else(Vec::new, |v| v.commands.clone())
+    }
+
+    /// What the app sends back in a frame in which Windows asks to close the window.
+    fn answer_to_close(a: &mut AppState) -> Vec<egui::ViewportCommand> {
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .events
+            .push(egui::ViewportEvent::Close);
+        commands_of(input, |ctx| a.handle_close_request(ctx))
+    }
+
+    #[test]
+    fn closing_while_recording_is_held_back_and_asks() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-recording");
+        let mut a = live_app(&base);
+        for state in [
+            RecorderState::Starting,
+            RecorderState::Recording,
+            RecorderState::Paused,
+        ] {
+            a.recorder.state = state;
+            a.open_modal = Some(Modal::Help);
+            let sent = answer_to_close(&mut a);
+            assert!(
+                sent.contains(&egui::ViewportCommand::CancelClose),
+                "{state:?}: {sent:?}"
+            );
+            // A minimized window has to come back, or nobody sees the question.
+            assert!(
+                sent.contains(&egui::ViewportCommand::Minimized(false)),
+                "{state:?}: {sent:?}"
+            );
+            assert!(
+                matches!(a.open_modal, Some(Modal::QuitWhileRecording)),
+                "{state:?}: {:?}",
+                a.open_modal
+            );
+        }
+        let text = painted_text(&mut a, Screen::Recorder);
+        assert!(shows_label(&text, "Stop recording and quit?"), "{text}");
+        assert!(shows_label(&text, "Keep recording"), "{text}");
+        assert!(shows_label(&text, "Stop and quit"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn closing_with_no_recording_running_is_not_held_back() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-idle");
+        let mut a = live_app(&base);
+        // `Processing` is the worker writing the last of the files: quitting waits for it.
+        for state in [
+            RecorderState::Idle,
+            RecorderState::Processing,
+            RecorderState::Saved,
+            RecorderState::Error,
+        ] {
+            a.recorder.state = state;
+            let sent = answer_to_close(&mut a);
+            assert!(
+                !sent.contains(&egui::ViewportCommand::CancelClose),
+                "{state:?}: {sent:?}"
+            );
+            assert!(a.open_modal.is_none(), "{state:?}");
+        }
+        // The preview records nothing, whatever it shows.
+        let mut preview = AppState::default();
+        preview.recorder.state = RecorderState::Recording;
+        assert!(!answer_to_close(&mut preview).contains(&egui::ViewportCommand::CancelClose));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Clicks the painted button labelled `key`, on the current screen or in the open modal;
+    /// returns every command the app sent while doing so.
+    fn click_button(a: &mut AppState, key: &str) -> Vec<egui::ViewportCommand> {
+        fn find(shape: &egui::Shape, wanted: &[&str]) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if wanted.contains(&t.galley.job.text.as_str()) => {
+                    Some(t.visual_bounding_rect().center())
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        let wanted = [key, crate::i18n::thai_of(key).unwrap_or(key)];
+        let theme = a.theme(None);
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+        let mut sent = Vec::new();
+        let mut frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let out = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+                crate::modals::draw(ctx, a, &theme);
+            });
+            if let Some(v) = out.viewport_output.get(&egui::ViewportId::ROOT) {
+                sent.extend(v.commands.clone());
+            }
+            out.shapes
+        };
+        frame(a, Vec::new());
+        let shapes = frame(a, Vec::new());
+        let pos = shapes
+            .iter()
+            .find_map(|c| find(&c.shape, &wanted))
+            .unwrap_or_else(|| panic!("no button {key}"));
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(a, vec![egui::Event::PointerMoved(pos)]);
+        frame(a, vec![button(true)]);
+        frame(a, vec![button(false)]);
+        sent
+    }
+
+    #[test]
+    fn the_quit_question_buttons_do_what_they_say() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-buttons");
+        let mut a = live_app(&base);
+        a.recorder.state = RecorderState::Recording;
+
+        a.open_modal = Some(Modal::QuitWhileRecording);
+        let sent = click_button(&mut a, "Keep recording");
+        assert!(!sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        assert!(a.open_modal.is_none());
+        assert!(
+            answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose),
+            "the next close asks again"
+        );
+
+        let sent = click_button(&mut a, "Stop and quit");
+        assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        assert!(!answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Clicks the switch on the same row as the first painted text that ends in `label`.
+    fn click_switch(a: &mut AppState, screen: Screen, label: &str) {
+        fn flatten<'a>(shape: &'a egui::Shape, out: &mut Vec<&'a egui::Shape>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| flatten(s, out)),
+                other => out.push(other),
+            }
+        }
+        a.current_screen = screen;
+        let theme = a.theme(None);
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 2400.0));
+        let frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(rect),
+                events,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+            })
+            .shapes
+        };
+        frame(a, Vec::new());
+        let painted = frame(a, Vec::new());
+        let mut shapes = Vec::new();
+        painted.iter().for_each(|c| flatten(&c.shape, &mut shapes));
+        let thai = crate::i18n::thai_of(label);
+        let row = shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Text(t) => {
+                    let text = &t.galley.job.text;
+                    (text.ends_with(label) || thai.is_some_and(|th| text.ends_with(th)))
+                        .then(|| t.visual_bounding_rect().center().y)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no text {label} on {screen:?}"));
+        let pos = shapes
+            .iter()
+            .find_map(|s| match s {
+                egui::Shape::Rect(r)
+                    if (r.rect.width() - 36.0).abs() < 0.5
+                        && (r.rect.height() - 20.0).abs() < 0.5
+                        && (r.rect.center().y - row).abs() < 14.0 =>
+                {
+                    Some(r.rect.center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no switch next to {label} on {screen:?}"));
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(a, vec![egui::Event::PointerMoved(pos)]);
+        frame(a, vec![button(true)]);
+        frame(a, vec![button(false)]);
+    }
+
+    /// What the next recording would capture: (system sound, microphone).
+    fn next_sources(a: &AppState) -> (bool, bool) {
+        let request = a.recorder.start_request();
+        (request.system, request.mic)
+    }
+
+    #[test]
+    fn the_audio_settings_switches_decide_what_is_recorded() {
+        let base = library_dir("app-settings-sources");
+        let mut a = live_app(&base);
+        assert_eq!(next_sources(&a), (true, true));
+        click_switch(&mut a, Screen::SettingsAudio, "Enable Microphone recording");
+        assert_eq!(next_sources(&a), (true, false));
+        click_switch(
+            &mut a,
+            Screen::SettingsAudio,
+            "Enable System Audio recording",
+        );
+        assert_eq!(next_sources(&a), (false, false));
+        // The Recorder page shows the same two switches.
+        click_switch(&mut a, Screen::Recorder, "Microphone");
+        assert_eq!(next_sources(&a), (false, true));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn source_switches_are_locked_while_a_recording_runs() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-sources-locked");
+        let mut a = live_app(&base);
+        for state in [
+            RecorderState::Starting,
+            RecorderState::Recording,
+            RecorderState::Paused,
+            RecorderState::Processing,
+        ] {
+            // A running recording keeps the sources it started with, so a switch that moved
+            // would claim something false.
+            for (screen, label) in [
+                (Screen::Recorder, "System Audio"),
+                (Screen::Recorder, "Microphone"),
+                (Screen::SettingsAudio, "Enable System Audio recording"),
+                (Screen::SettingsAudio, "Enable Microphone recording"),
+            ] {
+                a.recorder.state = state;
+                click_switch(&mut a, screen, label);
+                assert_eq!(
+                    next_sources(&a),
+                    (true, true),
+                    "{state:?} {screen:?} {label}"
+                );
+            }
+        }
+        a.recorder.state = RecorderState::Saved;
+        click_switch(&mut a, Screen::Recorder, "Microphone");
+        assert_eq!(next_sources(&a), (true, false));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_settings_pages_offer_nothing_that_does_nothing() {
+        // Shown in v0.0.1 with nothing behind them.
+        const GONE: [(&str, &str); 6] = [
+            ("Start with Windows", "เริ่มพร้อม Windows"),
+            ("Minimize to system tray", "ย่อลงถาดระบบ"),
+            ("Channel configuration", "การตั้งค่าช่องสัญญาณ"),
+            ("Test system audio", "ทดสอบเสียงระบบ"),
+            ("Test microphone", "ทดสอบไมโครโฟน"),
+            ("Runtime", "รันไทม์"),
+        ];
+        let base = library_dir("app-no-dead-controls");
+        let mut a = live_app(&base);
+        let mut found = Vec::new();
+        for screen in SCREENS {
+            let text = painted_text(&mut a, screen);
+            for (key, thai) in GONE {
+                if text.lines().any(|l| l == key || l == thai) {
+                    found.push(format!("{screen:?}: {key}"));
+                }
+            }
+        }
+        assert!(found.is_empty(), "{found:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_dialog_does_not_keep_the_height_of_the_one_before_it() {
+        fn find(shape: &egui::Shape, wanted: &[&str]) -> Option<f32> {
+            match shape {
+                egui::Shape::Text(t) if wanted.contains(&t.galley.job.text.as_str()) => {
+                    Some(t.visual_bounding_rect().center().y)
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        let mut a = AppState::default();
+        let theme = a.theme(None);
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        // The distance from the title to the button under the text, once `modal` has settled.
+        let mut height = |modal: Modal, title: &str, button: &str| -> f32 {
+            a.open_modal = Some(modal);
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                };
+                shapes = ctx
+                    .run(input, |ctx| crate::modals::draw(ctx, &mut a, &theme))
+                    .shapes;
+            }
+            let y = |key: &str| {
+                let wanted = [key, crate::i18n::thai_of(key).unwrap_or(key)];
+                shapes
+                    .iter()
+                    .find_map(|c| find(&c.shape, &wanted))
+                    .unwrap_or_else(|| panic!("no text {key}"))
+            };
+            y(button) - y(title)
+        };
+        let quit = || {
+            (
+                Modal::QuitWhileRecording,
+                "Stop recording and quit?",
+                "Keep recording",
+            )
+        };
+        let (modal, title, button) = quit();
+        let alone = height(modal, title, button);
+        height(Modal::Licenses, "Open-source licenses", "Close");
+        let (modal, title, button) = quit();
+        let after_the_tall_one = height(modal, title, button);
+        assert!(alone < 200.0, "{alone}");
+        assert!(
+            (after_the_tall_one - alone).abs() < 1.0,
+            "{alone} on its own, {after_the_tall_one} after the licence viewer"
+        );
+    }
+
+    #[test]
+    fn the_licences_button_shows_the_licence_texts() {
+        let base = library_dir("app-licences");
+        let mut a = live_app(&base);
+        a.current_screen = Screen::SettingsAdvanced;
+        click_button(&mut a, "Open-source licenses");
+        assert!(
+            matches!(a.open_modal, Some(Modal::Licenses)),
+            "{:?}",
+            a.open_modal
+        );
+        let text = painted_text(&mut a, Screen::SettingsAdvanced);
+        assert!(text.contains("# Third-party notices"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn no_page_claims_windows_11() {
+        // The program also runs on Windows 10.
+        let base = library_dir("app-windows-name");
+        let mut a = live_app(&base);
+        let mut found = Vec::new();
+        for modal in [None, Some(Modal::About)] {
+            for screen in SCREENS {
+                a.open_modal = modal.clone();
+                let text = painted_text(&mut a, screen);
+                found.extend(
+                    text.lines()
+                        .filter(|l| l.contains("Windows 11") || l.contains("Win 11"))
+                        .map(|l| format!("{screen:?}: {l}")),
+                );
+            }
+        }
+        assert!(found.is_empty(), "{found:#?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_theme_button_changes_what_the_user_sees_in_system_mode() {
+        let mut a = AppState {
+            theme_mode: ThemeMode::System,
+            current_screen: Screen::Recorder,
+            ..AppState::default()
+        };
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                system_theme: Some(egui::Theme::Light),
+                events,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                let theme = a.theme(ctx.system_theme());
+                egui::TopBottomPanel::top("topbar")
+                    .show(ctx, |ui| shell::draw_topbar(ui, a, &theme));
+            })
+            .shapes
+        };
+        fn find(shape: &egui::Shape, wanted: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.job.text == wanted => {
+                    Some(t.visual_bounding_rect().center())
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        frame(&mut a, Vec::new());
+        // Windows is light, so the app is light and the button offers dark (a moon).
+        let pos = frame(&mut a, Vec::new())
+            .iter()
+            .find_map(|c| find(&c.shape, egui_phosphor::regular::MOON))
+            .expect("a moon button");
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut a, vec![egui::Event::PointerMoved(pos)]);
+        frame(&mut a, vec![button(true)]);
+        frame(&mut a, vec![button(false)]);
+        assert_eq!(a.theme_mode, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn a_confirmed_quit_closes_the_window() {
+        use crate::screens::recorder::RecorderState;
+        let base = library_dir("app-close-confirmed");
+        let mut a = live_app(&base);
+        a.recorder.state = RecorderState::Recording;
+        let sent = commands_of(egui::RawInput::default(), |ctx| a.quit_while_recording(ctx));
+        assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
+        // The close that follows must not be held back again.
+        let sent = answer_to_close(&mut a);
+        assert!(
+            !sent.contains(&egui::ViewportCommand::CancelClose),
+            "{sent:?}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

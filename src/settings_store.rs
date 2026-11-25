@@ -14,8 +14,6 @@ pub struct Persisted {
     pub accent_idx: usize,
     pub font_scale_idx: usize,
     pub language_idx: usize,
-    pub start_with_windows: bool,
-    pub minimize_to_tray: bool,
     pub confirm_delete: bool,
     /// Device IDs (not list positions); empty means the Windows default.
     pub system_device: String,
@@ -41,8 +39,6 @@ impl Default for Persisted {
             accent_idx: 0,
             font_scale_idx: 1,
             language_idx: 0,
-            start_with_windows: false,
-            minimize_to_tray: true,
             confirm_delete: true,
             system_device: String::new(),
             mic_device: String::new(),
@@ -67,13 +63,11 @@ fn theme_name(mode: ThemeMode) -> &'static str {
 impl Persisted {
     pub fn to_text(&self) -> String {
         let mut text = format!(
-            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nstart_with_windows={}\nminimize_to_tray={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\nasr.precision={}\nasr.threads={}\n",
+            "theme={}\naccent={}\nfont_scale={}\nlanguage={}\nconfirm_delete={}\naudio.system_device={}\naudio.mic_device={}\nasr.precision={}\nasr.threads={}\n",
             theme_name(self.theme_mode),
             self.accent_idx,
             self.font_scale_idx,
             self.language_idx,
-            self.start_with_windows,
-            self.minimize_to_tray,
             self.confirm_delete,
             self.system_device,
             self.mic_device,
@@ -109,8 +103,6 @@ impl Persisted {
                 "accent" => set_index(&mut out.accent_idx, value, 3),
                 "font_scale" => set_index(&mut out.font_scale_idx, value, 4),
                 "language" => set_index(&mut out.language_idx, value, 2),
-                "start_with_windows" => set_bool(&mut out.start_with_windows, value),
-                "minimize_to_tray" => set_bool(&mut out.minimize_to_tray, value),
                 "confirm_delete" => set_bool(&mut out.confirm_delete, value),
                 "audio.system_device" => out.system_device = value.to_owned(),
                 "audio.mic_device" => out.mic_device = value.to_owned(),
@@ -210,8 +202,6 @@ mod tests {
             accent_idx: 2,
             font_scale_idx: 3,
             language_idx: 1,
-            start_with_windows: true,
-            minimize_to_tray: false,
             confirm_delete: false,
             system_device: String::new(),
             mic_device: String::new(),
@@ -268,6 +258,19 @@ mod tests {
         let s = Persisted::from_text("theme=light\n");
         assert_eq!(s.asr_precision, "int8");
         assert_eq!(s.asr_threads, 4);
+    }
+
+    #[test]
+    fn keys_of_removed_settings_are_ignored_and_not_written_again() {
+        // v0.0.1 wrote these two; `minimize_to_tray=true` is in every file it saved.
+        let s = Persisted::from_text(
+            "theme=light\nstart_with_windows=true\nminimize_to_tray=true\nconfirm_delete=false\n",
+        );
+        assert_eq!(s.theme_mode, ThemeMode::Light);
+        assert!(!s.confirm_delete);
+        let text = s.to_text();
+        assert!(!text.contains("start_with_windows"), "{text}");
+        assert!(!text.contains("minimize_to_tray"), "{text}");
     }
 
     #[test]

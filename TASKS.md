@@ -7,7 +7,7 @@ _None._
 ## Next
 
 - [ ] Task: Audio capture acceptance on a real Zoom or Teams call (open items of the audio capture work)
-  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call the other participants are only in `system.wav` and the user only in `mic.wav`; quitting and reopening Zoom/Teams resumes the system track; unplugging the microphone keeps recording and the UI says so; with Zoom and Teams both open and idle the right one is picked (known risk: lowest PID wins).
+  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call with another person, their speech is in `system.wav` and the user's own in `mic.wav`; the SYS meter moves while they speak, with the call's speaker chosen under System Audio; it works with Record pressed before joining and during the call; unplugging the output device or the microphone keeps recording and the UI says so.
   - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last flush (every 1 s since the preview text work, 5 s before); `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
   - Verification: record the call, then inspect both WAVs; record the result per item here.
 - [ ] Task: Transcription acceptance items that were not run, or only partly (open items of the transcription work)
@@ -26,10 +26,10 @@ _None._
   - Word fixes match exactly (Latin letters in any case): every wrong form has to be listed (the run below wrote "มก", which the seeded rules did not list, so "มอก." did not appear). Fixes do not change transcripts made before a rule was added.
   - Verification: do each item and record the result here.
 - [ ] Task: Release follow-ups (open items of the update check work)
-  - The first `Release` run for tag `v0.0.1` failed on a flaky test (see the CI task). After the fix and the pinned toolchain, run `45654722631` at `bb2d207` passed and made a draft Release; its checksum and zip contents were checked and the exe from the zip started. That build still showed sample data and carried Apache-2.0, so it is replaced before anything is published (see the release readiness task).
+  - The first `Release` run for tag `v0.0.1` failed on a flaky test (see the CI task). After the fix and the pinned toolchain, run `45654722631` at `bb2d207` passed and made a draft Release; its checksum and zip contents were checked and the exe from the zip started. That build still showed sample data and carried Apache-2.0, so its draft was deleted, `v0.0.1` was moved to `25f593a` (PR #14) and run `45659772587` made the draft that was published on 2026-11-26: <https://github.com/Piya-Boy/Meeting-Recorder/releases/tag/v0.0.1>. Checked after publishing, without logging in: `releases/latest` answers `v0.0.1` (not a draft or pre-release) and the downloaded zip matches `SHA256SUMS.txt`; the released exe read that answer and said it is the latest version.
   - The exe is not signed, so Windows SmartScreen warns on the first run (said in `README.md` and the release notes). Signing needs a code-signing certificate.
   - The collapsed sidebar shows no update hint; the Thai and light-theme screens were not screenshotted.
-  - Cut a release: raise `version` in `Cargo.toml` and commit, `git tag vN.N.N`, `git push origin vN.N.N`; the workflow builds a draft Release; check the zip and publish the draft (only a published Release is found by the app).
+  - Cut a release: raise `version` in `Cargo.toml` and commit, `git tag vN.N.N`, `git push origin vN.N.N`; the workflow builds a draft Release; check the zip and publish the draft (only a published Release is found by the app). In the same commit, update the README part "Known problems in the `v0.0.1` zip" and the "Changed since" part of `.github/release-notes.md`.
   - Verification: do each item and record the result here.
 - [ ] Task: Flaky tests and CI settings (open items of the CI work)
   - `asr::worker::tests::the_model_is_unloaded_after_the_idle_time` failed once in 24 runs of the test binary started 4 at a time (the whole suite under load); 80 parallel runs of that test alone did not fail and the failure message was not kept. It waits 500 ms for a 100 ms idle limit, so a starved worker thread is the likely cause. Catch the message (`cargo test` in a loop with `--nocapture` logging) before changing it.
@@ -119,7 +119,7 @@ _None._
     - PARTIAL download resume, search: see the open task above.
     - NOT RUN 2-minute speech with a clean capture: see the open task above.
   - Not verified: speaker labels on a real call (mic = "You", system = "Others" came from the clip runs, where the clips played through the speakers and the whole-system loopback also caught other PC audio).
-  - Open gate for any release: licence compatibility of the model (OpenMDW-1.1) with this project's licence, and the "Powered by OpenThai ASR" badge (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
+  - Licence gate (model licence and badge): closed on 2026-11-26 for builds that do not carry the model (`DECISIONS.md`, `THIRD_PARTY_NOTICES.md`).
   - Commit: branch `feature/asr-transcription`, PR #3 (open, stacked on #2).
 
 - [x] Task: Recordings, Transcripts and Transcript Detail from real data (branch `feature/library-real-data`; spec `docs/superpowers/specs/2026-11-24-library-real-data-design.md`, plan `docs/superpowers/plans/2026-11-24-library-real-data.md`)
@@ -220,12 +220,34 @@ _None._
   - Built: Settings > Storage shows the folder recordings really go to; Settings > Advanced keeps only About; "SQLite" is gone from the live screens and About; the recording name starts empty (saved as "recording"); the free-space figure and the state switcher appear only in the preview; the pill follows the Language setting. Existing recordings keep their names.
   - Licence: PolyForm Noncommercial 1.0.0 committed (`DECISIONS.md`). `README.md` has a Download section (Visual C++ Redistributable, SmartScreen, checksum, what does not work yet), and the Release workflow puts `.github/release-notes.md` into the draft.
   - Verification Evidence: render tests draw each main and settings screen and the About modal of an app with a fake sound card and read the painted text; they failed before the change (14 sample values found) and pass after it, and a control test shows the same check does see the sample data in the preview. `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings` clean; `cargo test --locked` 394 passed, 7 ignored. The local release exe, started without flags, was screenshotted on every sidebar screen and settings page; `settings.ini` was backed up and restored byte for byte.
-  - Not run: Thai and light-theme screenshots of the two changed settings pages; a computer without the Visual C++ Redistributable; recording and transcription with the CI-built exe.
+  - GitHub: CI green on PR #14 (run `45659195524`) and on `main` at `25f593a` (run `45659690943`); `Release` run `45659772587` passed.
+  - Checks on the draft's zip: `sha256sum -c` OK; four files, `LICENSE` is PolyForm Noncommercial; the draft's text starts with the install notes; the exe imports the Visual C++ runtime DLLs and has no delay imports. The CI-built exe, started without flags, was screenshotted on the sidebar screens and settings pages. With `USERPROFILE` pointed at a temporary folder: it transcribed a copy of a 16 s recording (6 s wait, 2 lines), and recorded 5.6 s with an empty name (folder `..._recording`, both tracks 269,593 frames, "No speech found"). The test audio was deleted and `settings.ini` restored.
+  - Not run: Thai and light-theme screenshots of the two changed settings pages; a computer without the Visual C++ Redistributable; speech spoken into the microphone with the CI-built exe.
 
-- [ ] Task: Connect or remove the controls that do nothing
-  - "Minimize to system tray" is saved but not acted on, is on by default and says closing the window keeps the app running; closing it quits and ends a recording. Fix this one first.
-  - Also not connected: "Start with Windows", "Channel configuration", "Runtime", "Test system audio", "Test microphone", the "Open-source licenses" button. The General page subtitle says "global shortcuts", but the shortcuts work only while the window has focus.
-  - Verification: each control does what its text says, or is gone.
+- [x] Task: Open points after `v0.0.1` (branch `fix/open-release-issues`)
+  - Controls that did nothing: "Start with Windows", "Minimize to system tray", "Channel configuration", "Runtime", "Test system audio" and "Test microphone" are removed; the "Open-source licenses" button opens the licence texts; the General page no longer says "global shortcuts". Closing the window during a recording asks first.
+  - Found on the way, in `v0.0.1`: Settings > Audio had switches of its own that nothing read, so a microphone switched off there was still recorded. Both pages now use one pair of switches, locked while a recording runs.
+  - Silent system track: an idle `ms-teams.exe` being picked as the capture target was reproduced with one test tone (whole system 21035, Teams alone 0) and changed. It does not explain the recordings `2026-11-25_1557` and `_1604`, which were a real Teams call; that change was replaced (next task).
+  - Licences: the `v0.0.1` zip has no licence text for the Rust packages, ONNX Runtime or the fonts. `THIRD_PARTY_LICENSES.txt` is generated, shipped in the zip and shown in the app. The model and badge gate is closed for builds that do not carry the model (not legal advice).
+  - "Windows 11": the sidebar, the About card, the About dialog and the Appearance page no longer say it. The System theme was always dark; it now follows the Windows setting.
+  - Found on the way: a dialog kept the height of the one shown before it (visible after the licence viewer, which is new on this branch). Fixed.
+  - Verification Evidence: tests were written first and seen to fail; `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` clean; `cargo test --locked` 410 passed, 7 ignored.
+  - Real exe on this machine (temporary profile; `settings.ini` restored and compared after the runs that used the real one): General and Audio without the removed rows; with the microphone switched off in Settings > Audio a recording made only `system.wav`; the close button during a recording asked, the file kept growing (1,686,554 to 2,002,394 bytes in 3 s), "Keep recording" went on, a Windows close message was held back too, and "Stop and quit" closed the app with a finished WAV header; with an idle Teams running, the fixed build showed "All system audio" and saved a system track with a peak of -1.4 dBFS; in Thai: General, Audio, Transcription, Appearance, Advanced, the licence viewer, the close question, the light theme and the System theme; after the dialog fix, About opened after the licence viewer at its normal height.
+  - Not run: the System theme on a light Windows (this Windows is dark and was not changed; covered by unit tests, and `egui-winit` 0.31.1 passes the Windows theme on at start and on change); a real Teams or Zoom call.
+  - GitHub: PR #15. At `66a51c3`, run `45671215668` passed `fmt`, `test` (410 passed, 7 ignored), `audit` and `licences` (its first run; the file built on Linux matched the committed one).
+
+- [x] Task: The system track is the whole chosen output device (branch `fix/open-release-issues`, chosen by the owner after a real Teams meeting was recorded as silence)
+  - Built: the capture of a meeting app's process is removed; the system track is the loopback of the device under System Audio, also after a lost device comes back; a line under the device list says so; "All system audio" is green.
+  - Verification Evidence: tests were written first and seen to fail; `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` clean; `cargo test --locked` 400 passed, 6 ignored (15 tests of the removed capture are gone, 4 are new). On this machine, through the real capture code (system source only, microphone off) while a stand-in `Zoom.exe` played a -50 dBFS tone: status `AllSystem`, `system.wav` not silent. Its peak was -6 dBFS, so other audio was playing and the run does not show the tone by itself; the recording was deleted. Real exe in English and Thai: the Recorder shows the new line under the device list, inside the card.
+  - Not run: a call with another person speaking (the open task above). The cause of the silent recordings was not reproduced (`DECISIONS.md`).
+
+- [ ] Task: Thai marks are drawn on top of each other
+  - egui 0.31.1 does no text shaping: a tone mark above an upper vowel is drawn over it (in "ทั่วไป" the tone mark covers the vowel). Seen on the real exe in the interface; transcript text is drawn the same way. `v0.0.1` has it. `design.md` asks for tone marks to be tested.
+  - Verification: stacked marks are readable in the interface and in a transcript, on screenshots of the real exe.
+
+- [ ] Task: Settings that are not saved
+  - These go back to their defaults at every start: the two source switches, the sample rate, "Partial transcription" and "Streaming chunk window". A microphone switched off is on again after a restart.
+  - Verification: change each, restart the real exe, and see it kept.
 
 ## Rules
 
