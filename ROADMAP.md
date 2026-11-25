@@ -11,7 +11,7 @@
 ### M1 - Foundation (Done)
 - [x] Repository setup (Rust + eframe/egui 0.31, no WebView)
 - [x] Architecture (screens / components / shell / theme / i18n / branding)
-- [x] Build and test pipeline (fmt, clippy, test pass; 19 tests). CI workflow on GitHub (fmt, clippy, tests, cargo audit) written and checked locally, not yet run on GitHub
+- [x] Build and test pipeline (fmt, clippy, test pass; 19 tests). CI workflow on GitHub (fmt, clippy, tests, cargo audit) green on GitHub
 
 ### M2 - Core Features (In Progress)
 - [x] UI: 10 screens, 3 modals, toasts, navigation, resizable frameless window
@@ -31,7 +31,7 @@
 - [ ] Error handling
 - [ ] Performance review
 - [ ] Security review
-- [ ] Release validation (installer, release-build check; a release workflow exists and has not run on GitHub yet)
+- [ ] Release validation (installer, a check on a clean computer; the release workflow runs on GitHub and makes a draft Release, none published yet)
 
 ## Status Values
 

@@ -6,7 +6,7 @@ The app is a native Rust program built with [egui / eframe](https://github.com/e
 
 ## Status
 
-The user interface is finished. The recording, transcription and storage backends are not built yet.
+The user interface, recording, transcription, the recording library and exports work on Windows; the table shows what is still open.
 
 | Area | State |
 |---|---|
@@ -62,7 +62,18 @@ The Recorder captures real audio (system and microphone as separate WAV files), 
 
 Shortcuts are ignored while a modal is open. Tab moves focus; Space and Enter activate the focused control.
 
+## Download
+
+Get the zip from [Releases](https://github.com/Piya-Boy/Meeting-Recorder/releases), unpack it and run `meeting-recorder.exe`.
+
+- Windows 10 or 11, 64-bit, with the [Microsoft Visual C++ Redistributable 2015-2022 (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe). Many computers already have it; install it if Windows reports that `MSVCP140.dll` or `VCRUNTIME140.dll` is missing.
+- The program is not code-signed, so Windows SmartScreen may warn on the first run: **More info**, then **Run anyway**.
+- Before that, check the download against `SHA256SUMS.txt` from the same release: `Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256`.
+- Not working yet: **Minimize to system tray** (closing the window quits the app and ends a recording in progress), **Start with Windows**, **Channel configuration**, the two audio test buttons and the licences viewer.
+
 ## Requirements
+
+To build from source:
 
 - Windows 10 or 11. The window rounding and icon handling target Windows; other platforms are untested.
 - [Rust](https://www.rust-lang.org/tools/install) stable with the MSVC toolchain (developed with 1.96).
