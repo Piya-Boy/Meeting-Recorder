@@ -61,10 +61,15 @@ fn heading(ui: &mut Ui, theme: &ThemeColors, text: &str) {
     );
 }
 
+/// The row of buttons under a dialog, right-aligned.
 fn footer(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        add(ui);
+    // `horizontal` keeps the row as tall as its buttons. A right-to-left layout on its own takes
+    // all the height left, so a dialog stayed as tall as the one shown before it.
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            add(ui);
+        });
     });
 }
 

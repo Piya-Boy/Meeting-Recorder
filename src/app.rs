@@ -3183,6 +3183,65 @@ mod tests {
     }
 
     #[test]
+    fn a_dialog_does_not_keep_the_height_of_the_one_before_it() {
+        fn find(shape: &egui::Shape, wanted: &[&str]) -> Option<f32> {
+            match shape {
+                egui::Shape::Text(t) if wanted.contains(&t.galley.job.text.as_str()) => {
+                    Some(t.visual_bounding_rect().center().y)
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        let mut a = AppState::default();
+        let theme = a.theme(None);
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        // The distance from the title to the button under the text, once `modal` has settled.
+        let mut height = |modal: Modal, title: &str, button: &str| -> f32 {
+            a.open_modal = Some(modal);
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                };
+                shapes = ctx
+                    .run(input, |ctx| crate::modals::draw(ctx, &mut a, &theme))
+                    .shapes;
+            }
+            let y = |key: &str| {
+                let wanted = [key, crate::i18n::thai_of(key).unwrap_or(key)];
+                shapes
+                    .iter()
+                    .find_map(|c| find(&c.shape, &wanted))
+                    .unwrap_or_else(|| panic!("no text {key}"))
+            };
+            y(button) - y(title)
+        };
+        let quit = || {
+            (
+                Modal::QuitWhileRecording,
+                "Stop recording and quit?",
+                "Keep recording",
+            )
+        };
+        let (modal, title, button) = quit();
+        let alone = height(modal, title, button);
+        height(Modal::Licenses, "Open-source licenses", "Close");
+        let (modal, title, button) = quit();
+        let after_the_tall_one = height(modal, title, button);
+        assert!(alone < 200.0, "{alone}");
+        assert!(
+            (after_the_tall_one - alone).abs() < 1.0,
+            "{alone} on its own, {after_the_tall_one} after the licence viewer"
+        );
+    }
+
+    #[test]
     fn the_licences_button_shows_the_licence_texts() {
         let base = library_dir("app-licences");
         let mut a = live_app(&base);
