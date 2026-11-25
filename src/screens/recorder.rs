@@ -998,6 +998,7 @@ fn source_badge(
         None => (tr("Ready"), theme.on_surface_variant),
         Some(SourceStatus::Active) => (tr("Connected"), theme.success_text),
         Some(SourceStatus::AllSystem) => (tr("All system audio"), theme.success_text),
+        Some(SourceStatus::DefaultOutput) => (tr("Using Windows default"), theme.warning_text),
         Some(SourceStatus::DeviceLost) => (tr("Device lost"), theme.error_text),
         Some(SourceStatus::Disabled) => (tr("Off"), theme.on_surface_variant),
         Some(SourceStatus::Failed(_)) => (tr("Could not start"), theme.error_text),
@@ -1782,6 +1783,18 @@ mod tests {
         let theme = ThemeColors::DARK;
         let (_, colour) = source_badge(&theme, true, Some(&SourceStatus::AllSystem), false);
         assert_eq!(colour, theme.success_text);
+    }
+
+    #[test]
+    fn recording_the_windows_default_in_place_of_the_chosen_output_is_a_warning() {
+        let theme = ThemeColors::DARK;
+        let (label, colour) = source_badge(&theme, true, Some(&SourceStatus::DefaultOutput), false);
+        assert_eq!(colour, theme.warning_text);
+        assert!(
+            ["Using Windows default", "ใช้ค่าเริ่มต้นของ Windows"].contains(&label),
+            "{label}"
+        );
+        assert!(crate::i18n::has_thai("Using Windows default"));
     }
 
     #[test]

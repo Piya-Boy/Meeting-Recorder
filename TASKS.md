@@ -7,7 +7,7 @@ _None._
 ## Next
 
 - [ ] Task: Audio capture acceptance on a real Zoom or Teams call (open items of the audio capture work)
-  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call with another person, their speech is in `system.wav` and the user's own in `mic.wav`; the SYS meter moves while they speak, with the call's speaker chosen under System Audio; it works with Record pressed before joining and during the call; unplugging the output device or the microphone keeps recording and the UI says so.
+  - Acceptance Criteria (not yet run, all need a real call or hardware change): in a 2-minute call with another person, their speech is in `system.wav` and the user's own in `mic.wav`; the SYS meter moves while they speak, with the call's speaker chosen under System Audio; it works with Record pressed before joining and during the call; unplugging the output device or the microphone keeps recording and the UI says so; with the output chosen by name, disconnecting it shows "Using Windows default" and keeps recording the sound, and reconnecting it shows "All system audio" again.
   - Open from the checks that did run: after a crash the WAV headers list only the audio up to the last flush (every 1 s since the preview text work, 5 s before); `recover_header` exists and is tested but nothing calls it (no start-up repair, no UI).
   - Verification: record the call, then inspect both WAVs; record the result per item here.
 - [ ] Task: Transcription acceptance items that were not run, or only partly (open items of the transcription work)
@@ -240,6 +240,11 @@ _None._
   - Built: the capture of a meeting app's process is removed; the system track is the loopback of the device under System Audio, also after a lost device comes back; a line under the device list says so; "All system audio" is green.
   - Verification Evidence: tests were written first and seen to fail; `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` clean; `cargo test --locked` 400 passed, 6 ignored (15 tests of the removed capture are gone, 4 are new). On this machine, through the real capture code (system source only, microphone off) while a stand-in `Zoom.exe` played a -50 dBFS tone: status `AllSystem`, `system.wav` not silent. Its peak was -6 dBFS, so other audio was playing and the run does not show the tone by itself; the recording was deleted. Real exe in English and Thai: the Recorder shows the new line under the device list, inside the card.
   - Not run: a call with another person speaking (the open task above). The cause of the silent recordings was not reproduced (`DECISIONS.md`).
+
+- [x] Task: A missing output device is stood in for by the Windows default (branch `fix/known-limits`)
+  - Built: at the start and after a loss, a chosen output device that cannot be opened is replaced by the Windows default ("Using Windows default"), and tried again every 2 s until it takes over. Also fixes a saved device that was not connected making the system source fail to start while the list showed "Windows default". The microphone is never replaced.
+  - Verification Evidence: with a fake sound card that can unplug one device, the move-and-return test and the missing-at-start test failed first, as did the badge test; `cargo test --locked` 408 passed, 6 ignored; the capture tests passed 15 runs in a row.
+  - Not run: real hardware (no device was disconnected, nothing was recorded). The open acceptance task above lists the check.
 
 - [ ] Task: Thai marks are drawn on top of each other
   - egui 0.31.1 does no text shaping: a tone mark above an upper vowel is drawn over it (in "ทั่วไป" the tone mark covers the vowel). Seen on the real exe in the interface; transcript text is drawn the same way. `v0.0.1` has it. `design.md` asks for tone marks to be tested.

@@ -71,6 +71,10 @@ mod fake {
         opened: Vec<SourceKind>,
         fail: Vec<FailKind>,
         txs: HashMap<usize, (u64, Sender<Msg>)>,
+        /// Device IDs that cannot be opened at the moment.
+        unplugged: Vec<String>,
+        /// Streams that are open, by generation.
+        live: Vec<(u64, SourceKind)>,
         next_gen: u64,
         devices: (Vec<DeviceInfo>, Vec<DeviceInfo>),
     }
@@ -94,6 +98,21 @@ mod fake {
         }
         pub(crate) fn fail_open(&self, kind: FailKind) {
             self.state.lock().unwrap().fail.push(kind);
+        }
+        pub(crate) fn unplug(&self, id: &str) {
+            self.state.lock().unwrap().unplugged.push(id.to_owned());
+        }
+        pub(crate) fn plug_in(&self, id: &str) {
+            self.state.lock().unwrap().unplugged.retain(|d| d != id);
+        }
+        /// The streams of `source` that are open now (a lost stream stays until stopped).
+        pub(crate) fn live(&self, source: Source) -> Vec<SourceKind> {
+            let st = self.state.lock().unwrap();
+            st.live
+                .iter()
+                .filter(|(_, k)| k.source() == source)
+                .map(|(_, k)| k.clone())
+                .collect()
         }
         pub(crate) fn set_devices(&self, system: Vec<DeviceInfo>, mic: Vec<DeviceInfo>) {
             self.state.lock().unwrap().devices = (system, mic);
@@ -134,6 +153,7 @@ mod fake {
     impl Stream for FakeStream {
         fn stop(self: Box<Self>) {
             let mut st = self.state.lock().unwrap();
+            st.live.retain(|(g, _)| *g != self.generation);
             if st.txs.get(&self.slot).map(|(g, _)| *g) == Some(self.generation) {
                 st.txs.remove(&self.slot);
             }
@@ -156,10 +176,15 @@ mod fake {
             if st.fail.contains(&fails) {
                 return Err(format!("fake open failure: {fails:?}"));
             }
+            let (SourceKind::Mic { device } | SourceKind::WholeSystem { device }) = &kind;
+            if device.as_ref().is_some_and(|id| st.unplugged.contains(id)) {
+                return Err(format!("fake open failure: {kind:?} is unplugged"));
+            }
             let slot = slot(kind.source());
             st.next_gen += 1;
             let generation = st.next_gen;
             st.txs.insert(slot, (generation, tx));
+            st.live.push((generation, kind.clone()));
             st.opened.push(kind);
             Ok(Box::new(FakeStream {
                 state: self.state.clone(),

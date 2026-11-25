@@ -57,6 +57,9 @@ pub enum SourceStatus {
     Active,
     /// The system track: everything that plays on the chosen output device.
     AllSystem,
+    /// The system track records the Windows default output, because the chosen output device
+    /// cannot be opened.
+    DefaultOutput,
     DeviceLost,
     Disabled,
     Failed(String),

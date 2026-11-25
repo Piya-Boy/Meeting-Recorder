@@ -235,6 +235,7 @@ const THAI: &[(&str, &str)] = &[
     ("Today", "วันนี้"),
     ("WASAPI active", "WASAPI ทำงานอยู่"),
     ("Windows default", "ค่าเริ่มต้นของ Windows"),
+    ("Using Windows default", "ใช้ค่าเริ่มต้นของ Windows"),
     ("Starting", "กำลังเริ่ม"),
     ("Saved", "บันทึกแล้ว"),
     ("Resume", "ต่อ"),

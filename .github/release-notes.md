@@ -18,6 +18,7 @@ Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256
 - A source switched off in **Settings > Audio** is no longer recorded. In 0.0.1 it was.
 - The system track is now everything that plays on the output device you choose under **System Audio**. 0.0.1 recorded Teams or Zoom alone when one was open, and the track could come out silent. Sounds from other programs, such as music and notifications, are now recorded too.
 - The two source switches, the sample rate and the live-transcript settings are kept after a restart. In 0.0.1 a microphone you switched off was on again.
+- If the output device you chose is not connected, when you press Record or during a recording, the system track records the Windows default and the Recorder says "Using Windows default". It goes back when your device returns. In 0.0.1 a chosen device that dropped stayed silent until it returned. A microphone is never swapped for another one.
 - Closing the window during a recording asks first.
 - Settings that did nothing are gone, among them "Minimize to system tray" and "Start with Windows".
 - The licence texts of the libraries, fonts and speech model are in the zip and in **Settings > Advanced > Open-source licenses**.
@@ -26,6 +27,7 @@ Get-FileHash .\meeting-recorder-*-windows-x86_64.zip -Algorithm SHA256
 ## Known limits
 
 - Keyboard shortcuts work only while the app window has focus.
+- The switch to the Windows default has not been tried with real hardware. If you change the Windows default while the old device stays connected, the recording does not follow it.
 - Not tried yet on a real call with another person speaking. Choose the device you hear the meeting on, and check that the **SYS** meter moves while others speak. Sound that a meeting app plays on another device is not recorded.
 - Thai tone marks above an upper vowel are drawn on top of it.
 

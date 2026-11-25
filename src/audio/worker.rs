@@ -36,10 +36,34 @@ pub struct WorkerConfig {
 }
 
 /// What a source that is being captured reports.
-fn capturing(source: Source) -> SourceStatus {
+fn capturing(source: Source, on_default: bool) -> SourceStatus {
     match source {
+        Source::System if on_default => SourceStatus::DefaultOutput,
         Source::System => SourceStatus::AllSystem,
         Source::Mic => SourceStatus::Active,
+    }
+}
+
+/// Opens what the user chose. A chosen output device that cannot be opened is stood in for by
+/// the Windows default, which is where Windows, and an app that follows it, send the sound
+/// then; the flag says that this happened. A microphone is never swapped for another one,
+/// which could pick up a room the user did not mean to record.
+fn open_or_default(
+    backend: &dyn Backend,
+    tx: &Sender<Msg>,
+    chosen: &SourceKind,
+    origin: Instant,
+    rate: u32,
+) -> Result<(Box<dyn Stream>, bool), String> {
+    let open = |kind: SourceKind| backend.open(kind, origin, rate, tx.clone());
+    match open(chosen.clone()) {
+        Ok(stream) => Ok((stream, false)),
+        Err(e) if matches!(chosen, SourceKind::WholeSystem { device: Some(_) }) => {
+            open(SourceKind::WholeSystem { device: None })
+                .map(|stream| (stream, true))
+                .map_err(|_| e)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -109,10 +133,11 @@ struct Track {
     writer: WavWriter<std::fs::File>,
     clock: TrackClock,
     stream: Option<Box<dyn Stream>>,
-    /// What the stream was opened as; a lost process source waits for the app, others for
-    /// the device.
+    /// What the user chose. The stream is open on it, except while `on_default`.
     kind: SourceKind,
-    /// Set while the source is lost: when to try again.
+    /// The chosen output device cannot be opened and the Windows default is recorded.
+    on_default: bool,
+    /// Set while the source is lost or on the default: when to try the choice again.
     retry_at: Option<Instant>,
     last_flush: u64,
     level_db: f32,
@@ -132,6 +157,7 @@ impl Track {
 
             stream: None,
             kind,
+            on_default: false,
             retry_at: None,
             last_flush: 0,
             level_db: SILENT_DB,
@@ -347,19 +373,17 @@ impl Worker {
         let mic = SourceKind::Mic {
             device: req.mic_device.clone(),
         };
-        let mut opened: Vec<(Source, Box<dyn Stream>, SourceKind)> = Vec::new();
+        let mut opened: Vec<(Source, Box<dyn Stream>, SourceKind, bool)> = Vec::new();
         for (wanted, kind) in [(req.system, system), (req.mic, mic)] {
             let source = kind.source();
             let status = if !wanted {
                 SourceStatus::Disabled
             } else {
-                match self
-                    .backend
-                    .open(kind.clone(), origin, req.sample_rate, self.msg_tx.clone())
+                match open_or_default(&*self.backend, &self.msg_tx, &kind, origin, req.sample_rate)
                 {
-                    Ok(s) => {
-                        opened.push((source, s, kind));
-                        capturing(source)
+                    Ok((s, on_default)) => {
+                        opened.push((source, s, kind, on_default));
+                        capturing(source, on_default)
                     }
                     Err(e) => SourceStatus::Failed(e),
                 }
@@ -375,7 +399,7 @@ impl Worker {
         let dir = match naming::session_dir(&req.base_dir, &naming::local_stamp(), &req.name) {
             Ok(d) => d,
             Err(e) => {
-                for (_, s, _) in opened {
+                for (_, s, ..) in opened {
                     s.stop();
                 }
                 self.emit(Event::Error(format!(
@@ -391,7 +415,7 @@ impl Worker {
         let mut failure = None;
         let mut rest = opened.into_iter();
 
-        for (source, stream, kind) in rest.by_ref() {
+        for (source, stream, kind, on_default) in rest.by_ref() {
             let file = if source == Source::System {
                 "system.wav"
             } else {
@@ -401,6 +425,8 @@ impl Worker {
             match Track::create(&dir, file, req.sample_rate, kind) {
                 Ok(mut t) => {
                     t.stream = Some(stream);
+                    t.on_default = on_default;
+                    t.retry_at = on_default.then(|| Instant::now() + self.cfg.retry_interval);
                     if source == Source::System {
                         system = Some(t);
                     } else {
@@ -415,7 +441,7 @@ impl Worker {
             }
         }
         if let Some(e) = failure {
-            for (_, s, _) in rest {
+            for (_, s, ..) in rest {
                 s.stop();
             }
             for t in [system, mic].into_iter().flatten() {
@@ -465,6 +491,7 @@ impl Worker {
         if let Some(stream) = t.stream.take() {
             stream.stop();
         }
+        t.on_default = false;
         t.retry_at = Some(retry_at);
         self.emit(Event::SourceStatus {
             source,
@@ -472,7 +499,8 @@ impl Worker {
         });
     }
 
-    /// Reopens lost sources, on their own device, once their retry time has come.
+    /// Once their retry time has come: reopens lost sources, and moves a system track that
+    /// is on the Windows default back to the chosen output device.
     fn retry_lost(&mut self) {
         if !matches!(self.state, SessionState::Recording | SessionState::Paused) {
             return;
@@ -490,24 +518,32 @@ impl Worker {
             if t.retry_at.is_none_or(|at| at > now) {
                 continue;
             }
-            let kind = t.kind.clone();
-            match self
-                .backend
-                .open(kind.clone(), origin, rate, self.msg_tx.clone())
-            {
-                Ok(stream) => {
-                    t.stream = Some(stream);
-                    t.kind = kind;
-                    t.retry_at = None;
-                    reopened.push(source);
+            let result = if t.on_default && t.stream.is_some() {
+                // Already recording the default: only the chosen device is better.
+                self.backend
+                    .open(t.kind.clone(), origin, rate, self.msg_tx.clone())
+                    .map(|stream| (stream, false))
+            } else {
+                open_or_default(&*self.backend, &self.msg_tx, &t.kind, origin, rate)
+            };
+            match result {
+                Ok((stream, on_default)) => {
+                    // The new stream is open before the old one stops, so nothing falls
+                    // between them; the track's clock drops what both of them heard.
+                    if let Some(old) = t.stream.replace(stream) {
+                        old.stop();
+                    }
+                    t.on_default = on_default;
+                    t.retry_at = on_default.then(|| now + self.cfg.retry_interval);
+                    reopened.push((source, on_default));
                 }
                 Err(_) => t.retry_at = Some(now + self.cfg.retry_interval),
             }
         }
-        for source in reopened {
+        for (source, on_default) in reopened {
             self.emit(Event::SourceStatus {
                 source,
-                status: capturing(source),
+                status: capturing(source, on_default),
             });
         }
     }
@@ -980,6 +1016,93 @@ mod tests {
             "the gap is silence"
         );
         assert!(sys[96_000..].iter().all(|&s| s == 3));
+    }
+
+    fn output(id: Option<&str>) -> SourceKind {
+        SourceKind::WholeSystem {
+            device: id.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_chosen_output_that_drops_moves_to_the_windows_default_and_back() {
+        let mut r = Rig::new();
+        let mut req = r.req(true, true);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.push(Source::System, 0, tone(48_000, 1));
+        r.fake.unplug("speaker");
+        assert!(r.fake.lose(Source::System));
+        r.wait(
+            "device lost",
+            status(Source::System, SourceStatus::DeviceLost),
+        );
+        r.wait(
+            "the Windows default",
+            status(Source::System, SourceStatus::DefaultOutput),
+        );
+        assert_eq!(r.fake.live(Source::System), vec![output(None)]);
+        r.fake.push(Source::System, 96_000, tone(48_000, 3));
+
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output again",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        assert_eq!(
+            r.fake.live(Source::System),
+            vec![output(Some("speaker"))],
+            "the stream on the default is stopped"
+        );
+        // The new stream starts half a second before the old one ended.
+        r.fake.push(Source::System, 120_000, tone(48_000, 5));
+        r.fake.push(Source::Mic, 0, tone(168_000, 2));
+        r.h.send(Command::Stop);
+        let dir = r.wait_saved();
+        let sys = read_wav(&dir.join("system.wav"));
+        let mic = read_wav(&dir.join("mic.wav"));
+        assert_eq!(sys.len(), mic.len());
+        assert_eq!(sys.len(), 168_000, "the overlap is not written twice");
+        assert!(sys[48_000..96_000].iter().all(|&s| s == 0));
+        assert!(sys[96_000..144_000].iter().all(|&s| s == 3));
+        assert!(sys[144_000..].iter().all(|&s| s == 5));
+    }
+
+    #[test]
+    fn a_missing_chosen_output_records_the_windows_default_from_the_start() {
+        let mut r = Rig::new();
+        r.fake.unplug("speaker");
+        let mut req = r.req(true, false);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait(
+            "the Windows default",
+            status(Source::System, SourceStatus::DefaultOutput),
+        );
+        r.wait_state(SessionState::Recording);
+        assert_eq!(r.fake.live(Source::System), vec![output(None)]);
+
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        assert_eq!(r.fake.live(Source::System), vec![output(Some("speaker"))]);
+    }
+
+    #[test]
+    fn a_microphone_is_never_swapped_for_another_one() {
+        let mut r = Rig::new();
+        let mut req = r.req(true, true);
+        req.mic_device = Some("headset".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.unplug("headset");
+        assert!(r.fake.lose(Source::Mic));
+        r.wait("device lost", status(Source::Mic, SourceStatus::DeviceLost));
+        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
+        assert!(!r.fake.opened().contains(&SourceKind::Mic { device: None }));
     }
 
     #[test]
