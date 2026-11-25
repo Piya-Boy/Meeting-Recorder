@@ -154,4 +154,10 @@ The bundled fonts (Inter, JetBrains Mono, Noto Sans Thai) are licensed under the
 
 Copyright 2026 Piya Miang-Lae.
 
-Licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for the full text. The bundled fonts keep their own SIL Open Font License (see Third-party assets).
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). In short:
+
+- You may use, copy, modify and build new works on this software, and share your changes, for any noncommercial purpose (personal use, study, research, hobby projects, non-profit and educational use).
+- You may not sell it or use it commercially, including selling copies or modified versions, or offering it as a paid product or service.
+- Whenever you share the software, include the licence text and the `Required Notice` line from `LICENSE`.
+
+The licence text is the authority; this summary is not legal advice. For commercial use, contact the copyright holder for a separate licence. The bundled fonts keep their own SIL Open Font License (see Third-party assets).
