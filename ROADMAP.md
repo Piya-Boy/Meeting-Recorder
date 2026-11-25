@@ -31,7 +31,7 @@
 - [ ] Error handling
 - [ ] Performance review
 - [ ] Security review
-- [ ] Release validation (installer, a check on a clean computer; the release workflow runs on GitHub and makes a draft Release, none published yet)
+- [ ] Release validation (installer, a check on a clean computer; the release workflow makes a draft Release on GitHub; `v0.0.1` is published as a zip, with no installer and no check on a clean computer)
 
 ## Status Values
 

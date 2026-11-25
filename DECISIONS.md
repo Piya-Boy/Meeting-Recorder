@@ -316,3 +316,12 @@ _Add decisions below._
 - Consequences: A computer without the redistributable cannot start the app until it is installed.
 - References: `.github/release-notes.md`, `README.md`
 
+### 2026-11-26 - v0.0.1 was published while the model licence and badge gate is open
+
+- Status: Accepted
+- Context: The gate of 2026-11-24 says not to ship the badge as final before the OpenMDW-1.1 compatibility and the publisher's badge rules are checked. The release zip does not contain the model; the app shows OpenThai ASR badges. The owner was told this, the unconnected tray switch and the two silent recordings before publishing.
+- Decision: The owner chose to publish `v0.0.1` as it was.
+- Alternatives: Settle the gate or remove the badge first; keep the Release as a draft.
+- Consequences: The gate is not settled by publishing and stays open. Copies already downloaded cannot be recalled.
+- References: the 2026-11-24 gate entry, `THIRD_PARTY_NOTICES.md`, <https://github.com/Piya-Boy/Meeting-Recorder/releases/tag/v0.0.1>
+

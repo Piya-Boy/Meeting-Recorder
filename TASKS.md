@@ -26,7 +26,7 @@ _None._
   - Word fixes match exactly (Latin letters in any case): every wrong form has to be listed (the run below wrote "มก", which the seeded rules did not list, so "มอก." did not appear). Fixes do not change transcripts made before a rule was added.
   - Verification: do each item and record the result here.
 - [ ] Task: Release follow-ups (open items of the update check work)
-  - The first `Release` run for tag `v0.0.1` failed on a flaky test (see the CI task). After the fix and the pinned toolchain, run `45654722631` at `bb2d207` passed and made a draft Release; its checksum and zip contents were checked and the exe from the zip started. That build still showed sample data and carried Apache-2.0, so its draft was deleted, `v0.0.1` was moved to `25f593a` (PR #14) and run `45659772587` made the current draft. Nothing is published.
+  - The first `Release` run for tag `v0.0.1` failed on a flaky test (see the CI task). After the fix and the pinned toolchain, run `45654722631` at `bb2d207` passed and made a draft Release; its checksum and zip contents were checked and the exe from the zip started. That build still showed sample data and carried Apache-2.0, so its draft was deleted, `v0.0.1` was moved to `25f593a` (PR #14) and run `45659772587` made the draft that was published on 2026-11-26: <https://github.com/Piya-Boy/Meeting-Recorder/releases/tag/v0.0.1>. Checked after publishing, without logging in: `releases/latest` answers `v0.0.1` (not a draft or pre-release) and the downloaded zip matches `SHA256SUMS.txt`; the released exe read that answer and said it is the latest version.
   - The exe is not signed, so Windows SmartScreen warns on the first run (said in `README.md` and the release notes). Signing needs a code-signing certificate.
   - The collapsed sidebar shows no update hint; the Thai and light-theme screens were not screenshotted.
   - Cut a release: raise `version` in `Cargo.toml` and commit, `git tag vN.N.N`, `git push origin vN.N.N`; the workflow builds a draft Release; check the zip and publish the draft (only a published Release is found by the app).
@@ -228,6 +228,12 @@ _None._
   - "Minimize to system tray" is saved but not acted on, is on by default and says closing the window keeps the app running; closing it quits and ends a recording. Fix this one first.
   - Also not connected: "Start with Windows", "Channel configuration", "Runtime", "Test system audio", "Test microphone", the "Open-source licenses" button. The General page subtitle says "global shortcuts", but the shortcuts work only while the window has focus.
   - Verification: each control does what its text says, or is gone.
+
+- [ ] Task: Open points when `v0.0.1` was published
+  - The system track of `2026-11-25_1557` (369 s) and `2026-11-25_1604` (223 s) is zero from start to end and the microphone is close to silent, so both transcripts have no lines. Not known: whether anything was playing. If something was playing through "Headphones (Bluetooth Speaker)", loopback capture on that device does not work. Play sound through it while recording and read the system level.
+  - The model licence and badge gate (`DECISIONS.md`, 2026-11-24) is still open.
+  - "Windows 11" is fixed text in the sidebar footer, the About card and the About dialog; the README also lists Windows 10.
+  - Verification: do each item and record the result here.
 
 ## Rules
 
