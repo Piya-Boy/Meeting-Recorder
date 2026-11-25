@@ -101,12 +101,20 @@ impl ThemeColors {
         link_text: Color32::from_rgb(0x1D, 0x4E, 0xD8),
     };
 
-    pub fn get(mode: ThemeMode) -> Self {
+    /// `system` is what Windows reports; dark when it says nothing.
+    pub fn get(mode: ThemeMode, system: Option<egui::Theme>) -> Self {
         match mode {
             ThemeMode::Dark => Self::DARK,
             ThemeMode::Light => Self::LIGHT,
-            ThemeMode::System => Self::DARK, // Default Windows 11 dark for media tools
+            ThemeMode::System => match system {
+                Some(egui::Theme::Light) => Self::LIGHT,
+                Some(egui::Theme::Dark) | None => Self::DARK,
+            },
         }
+    }
+
+    pub fn is_light(&self) -> bool {
+        self.background.r() >= 128
     }
 
     /// Re-tints the interactive colours with `accent` (index 0 = the default blue).
@@ -120,7 +128,7 @@ impl ThemeColors {
         if accent_idx == 0 {
             return self;
         }
-        let dark = self.background.r() < 128;
+        let dark = !self.is_light();
         let mix = |a: Color32, b: Color32, t: f32| {
             let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
             Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
@@ -227,10 +235,10 @@ pub fn mono_bold_family() -> egui::FontFamily {
 }
 
 pub fn apply_theme(ctx: &egui::Context, theme: &ThemeColors) {
-    let mut visuals = if theme.background.r() < 128 {
-        egui::Visuals::dark()
-    } else {
+    let mut visuals = if theme.is_light() {
         egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
     };
 
     visuals.override_text_color = Some(theme.on_background);
@@ -277,6 +285,19 @@ pub fn apply_theme(ctx: &egui::Context, theme: &ThemeColors) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_system_theme_follows_windows() {
+        let colours = |mode, system| ThemeColors::get(mode, system).background;
+        let (dark, light) = (ThemeColors::DARK.background, ThemeColors::LIGHT.background);
+        assert_eq!(colours(ThemeMode::System, Some(egui::Theme::Light)), light);
+        assert_eq!(colours(ThemeMode::System, Some(egui::Theme::Dark)), dark);
+        // Windows did not say.
+        assert_eq!(colours(ThemeMode::System, None), dark);
+        // A chosen theme ignores Windows.
+        assert_eq!(colours(ThemeMode::Dark, Some(egui::Theme::Light)), dark);
+        assert_eq!(colours(ThemeMode::Light, Some(egui::Theme::Dark)), light);
+    }
 
     #[test]
     fn default_accent_leaves_palette_untouched() {

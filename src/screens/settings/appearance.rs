@@ -43,7 +43,7 @@ pub fn draw_settings_appearance(
         ui,
         theme,
         "Appearance",
-        "Select Dark, Light, or Windows 11 System theme, accent color, and UI font scaling.",
+        "Select a dark, light or Windows system theme, an accent color and the UI font scale.",
         |ui| {
             // Theme picker: three equal cards.
             let gap = 12.0;
@@ -53,7 +53,7 @@ pub fn draw_settings_appearance(
                 for (mode, label, tag) in [
                     (ThemeMode::Dark, "Dark theme", "Default"),
                     (ThemeMode::Light, "Light theme", "Preview"),
-                    (ThemeMode::System, "System theme", "Win 11"),
+                    (ThemeMode::System, "System theme", "Windows"),
                 ] {
                     if theme_card(ui, theme, card_w, mode, label, tag, *theme_mode == mode)
                         .clicked()

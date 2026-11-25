@@ -1083,8 +1083,8 @@ impl AppState {
         );
     }
 
-    fn theme(&self) -> ThemeColors {
-        ThemeColors::get(self.theme_mode).with_accent(self.settings_appearance.accent_idx)
+    fn theme(&self, system: Option<egui::Theme>) -> ThemeColors {
+        ThemeColors::get(self.theme_mode, system).with_accent(self.settings_appearance.accent_idx)
     }
 }
 
@@ -1140,7 +1140,7 @@ impl eframe::App for AppState {
         if self.open_modal.is_none() {
             self.handle_shortcuts(ctx);
         }
-        let theme = self.theme();
+        let theme = self.theme(ctx.system_theme());
         apply_theme(ctx, &theme);
         let zoom = self.settings_appearance.zoom_factor();
         if (ctx.zoom_factor() - zoom).abs() > f32::EPSILON {
@@ -2770,7 +2770,7 @@ mod tests {
             }
         }
         a.current_screen = screen;
-        let theme = a.theme();
+        let theme = a.theme(None);
         let ctx = egui::Context::default();
         crate::theme::configure_fonts(&ctx);
         let input = egui::RawInput {
@@ -2784,6 +2784,9 @@ mod tests {
         // The first frame only sizes some widgets; the second is what the user sees.
         for _ in 0..2 {
             let frame = ctx.run(input.clone(), |ctx| {
+                egui::SidePanel::left("sidebar")
+                    .exact_width(220.0)
+                    .show(ctx, |ui| shell::draw_sidebar(ui, a, &theme));
                 egui::TopBottomPanel::top("topbar")
                     .show(ctx, |ui| shell::draw_topbar(ui, a, &theme));
                 egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
@@ -2970,7 +2973,7 @@ mod tests {
             }
         }
         let wanted = [key, crate::i18n::thai_of(key).unwrap_or(key)];
-        let theme = a.theme();
+        let theme = a.theme(None);
         let ctx = egui::Context::default();
         crate::theme::configure_fonts(&ctx);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
@@ -3039,7 +3042,7 @@ mod tests {
             }
         }
         a.current_screen = screen;
-        let theme = a.theme();
+        let theme = a.theme(None);
         let ctx = egui::Context::default();
         crate::theme::configure_fonts(&ctx);
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 2400.0));
@@ -3193,6 +3196,80 @@ mod tests {
         let text = painted_text(&mut a, Screen::SettingsAdvanced);
         assert!(text.contains("# Third-party notices"), "{text}");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn no_page_claims_windows_11() {
+        // The program also runs on Windows 10.
+        let base = library_dir("app-windows-name");
+        let mut a = live_app(&base);
+        let mut found = Vec::new();
+        for modal in [None, Some(Modal::About)] {
+            for screen in SCREENS {
+                a.open_modal = modal.clone();
+                let text = painted_text(&mut a, screen);
+                found.extend(
+                    text.lines()
+                        .filter(|l| l.contains("Windows 11") || l.contains("Win 11"))
+                        .map(|l| format!("{screen:?}: {l}")),
+                );
+            }
+        }
+        assert!(found.is_empty(), "{found:#?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_theme_button_changes_what_the_user_sees_in_system_mode() {
+        let mut a = AppState {
+            theme_mode: ThemeMode::System,
+            current_screen: Screen::Recorder,
+            ..AppState::default()
+        };
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let frame = |a: &mut AppState, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                system_theme: Some(egui::Theme::Light),
+                events,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                let theme = a.theme(ctx.system_theme());
+                egui::TopBottomPanel::top("topbar")
+                    .show(ctx, |ui| shell::draw_topbar(ui, a, &theme));
+            })
+            .shapes
+        };
+        fn find(shape: &egui::Shape, wanted: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.job.text == wanted => {
+                    Some(t.visual_bounding_rect().center())
+                }
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, wanted)),
+                _ => None,
+            }
+        }
+        frame(&mut a, Vec::new());
+        // Windows is light, so the app is light and the button offers dark (a moon).
+        let pos = frame(&mut a, Vec::new())
+            .iter()
+            .find_map(|c| find(&c.shape, egui_phosphor::regular::MOON))
+            .expect("a moon button");
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut a, vec![egui::Event::PointerMoved(pos)]);
+        frame(&mut a, vec![button(true)]);
+        frame(&mut a, vec![button(false)]);
+        assert_eq!(a.theme_mode, ThemeMode::Dark);
     }
 
     #[test]

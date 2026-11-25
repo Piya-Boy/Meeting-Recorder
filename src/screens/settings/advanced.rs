@@ -78,7 +78,7 @@ pub fn draw_settings_advanced(
                         );
                         ui.label(
                             RichText::new(format!(
-                                "{} {} · Windows 11 x86_64",
+                                "{} {} · Windows x86_64",
                                 tr("Version"),
                                 crate::update::VERSION
                             ))

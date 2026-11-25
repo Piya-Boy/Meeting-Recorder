@@ -105,7 +105,7 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
     heading(ui, theme, tr("About Meeting Recorder"));
     ui.label(
         RichText::new(format!(
-            "Meeting Recorder v{} (x86_64 Windows 11)",
+            "Meeting Recorder v{} (x86_64 Windows)",
             crate::update::VERSION
         ))
         .font(egui::FontId::monospace(12.0))
