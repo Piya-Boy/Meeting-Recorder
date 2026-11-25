@@ -4,7 +4,6 @@
 pub mod backend;
 pub mod clock;
 pub mod naming;
-pub mod procfind;
 pub mod session;
 #[cfg(windows)]
 pub mod wasapi_backend;

@@ -1,4 +1,4 @@
-//! WASAPI capture (Windows): microphone, whole-system loopback, per-process loopback.
+//! WASAPI capture (Windows): microphone and whole-system loopback.
 //!
 //! Each stream runs on its own thread (COM objects are created there), in shared event mode
 //! with automatic format conversion to mono 32-bit float at the session rate (stereo as a
@@ -6,7 +6,6 @@
 //! device's QPC timestamps, so gaps (loopback sends nothing while no sound plays) and clock
 //! drift show up as differences the worker's `TrackClock` corrects.
 
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -15,23 +14,16 @@ use std::time::{Duration, Instant};
 
 use wasapi::{
     deinitialize, initialize_mta, AudioCaptureClient, AudioClient, DeviceEnumerator, Direction,
-    Handle, SampleType, SessionState, StreamMode, WaveFormat,
-};
-use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    Handle, SampleType, StreamMode, WaveFormat,
 };
 
 use super::backend::{Backend, Chunk, Msg, SourceKind, Stream};
-use super::procfind;
 use super::session::{DeviceInfo, Source};
 
 /// Buffer duration asked from the audio engine (20 ms, in 100 ns units).
 const BUFFER_HNS: i64 = 200_000;
 /// How long a capture thread waits for the device event before checking the stop flag.
 const WAIT_MS: u32 = 50;
-/// How often a process source checks that its process still exists.
-const ALIVE_CHECK: Duration = Duration::from_secs(1);
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,11 +174,6 @@ impl Backend for WasapiBackend {
         }
     }
 
-    fn meeting_target(&self) -> Option<u32> {
-        let _ = initialize_mta();
-        procfind::pick_target(&procfind::list_processes(), &active_audio_pids())
-    }
-
     fn list_devices(&self) -> (Vec<DeviceInfo>, Vec<DeviceInfo>) {
         let _ = initialize_mta();
         (devices(Direction::Render), devices(Direction::Capture))
@@ -219,53 +206,6 @@ fn devices(direction: Direction) -> Vec<DeviceInfo> {
     out
 }
 
-/// Pids that own an active audio session on any output device.
-fn active_audio_pids() -> HashSet<u32> {
-    let mut out = HashSet::new();
-    let Ok(enumerator) = DeviceEnumerator::new() else {
-        return out;
-    };
-    let Ok(collection) = enumerator.get_device_collection(Direction::Render) else {
-        return out;
-    };
-    for device in &collection {
-        let Ok(device) = device else { continue };
-        let Ok(manager) = device.get_iaudiosessionmanager() else {
-            continue;
-        };
-        let Ok(sessions) = manager.get_audiosessionenumerator() else {
-            continue;
-        };
-        let Ok(count) = sessions.get_count() else {
-            continue;
-        };
-        for i in 0..count {
-            let Ok(session) = sessions.get_session(i) else {
-                continue;
-            };
-            if matches!(session.get_state(), Ok(SessionState::Active)) {
-                if let Ok(pid) = session.get_process_id() {
-                    out.insert(pid);
-                }
-            }
-        }
-    }
-    out
-}
-
-fn process_alive(pid: u32) -> bool {
-    // SAFETY: the handle is checked for failure and closed before returning.
-    unsafe {
-        let h = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
-        if h == 0 {
-            return false;
-        }
-        let waited = WaitForSingleObject(h, 0);
-        CloseHandle(h);
-        waited != WAIT_OBJECT_0
-    }
-}
-
 struct Opened {
     client: AudioClient,
     event: Handle,
@@ -286,9 +226,6 @@ fn make_client(kind: &SourceKind, enumerator: &DeviceEnumerator) -> Result<Audio
         SourceKind::Mic { device } => pick(device, Direction::Capture),
         // A render device captured as `Capture` is a loopback.
         SourceKind::WholeSystem { device } => pick(device, Direction::Render),
-        SourceKind::Process { pid } => {
-            AudioClient::new_application_loopback_client(*pid, true).map_err(|e| e.to_string())
-        }
     }
 }
 
@@ -336,27 +273,25 @@ fn capture_thread(
         }
         Ok(opened) => {
             let _ = ready.send(Ok(()));
-            run_capture(&kind, origin, rate, &tx, &stop, &opened);
+            run_capture(kind.source(), origin, rate, &tx, &stop, &opened);
             let _ = opened.client.stop_stream();
         }
     }
     deinitialize();
 }
 
-/// Reads packets until stopped; reports `Lost` once if the device or process goes away.
+/// Reads packets until stopped; reports `Lost` once if the device goes away.
 fn run_capture(
-    kind: &SourceKind,
+    source: Source,
     origin: Instant,
     rate: u32,
     tx: &Sender<Msg>,
     stop: &AtomicBool,
     o: &Opened,
 ) {
-    let source: Source = kind.source();
     let frame_bytes = o.channels * 4;
     let mut timeline = Timeline::new(origin, rate);
     let mut buf = Vec::new();
-    let mut last_alive = Instant::now();
     let lost = || {
         let _ = tx.send(Msg::Lost(source));
     };
@@ -396,14 +331,6 @@ fn run_capture(
                 .is_err()
             {
                 return;
-            }
-        }
-        if let SourceKind::Process { pid } = kind {
-            if last_alive.elapsed() >= ALIVE_CHECK {
-                last_alive = Instant::now();
-                if !process_alive(*pid) {
-                    return lost();
-                }
             }
         }
     }
@@ -565,19 +492,6 @@ mod tests {
     fn wasapi_whole_system_loopback_opens() {
         let (msgs, opened) = collect(SourceKind::WholeSystem { device: None }, 1);
         opened.expect("open default loopback");
-        assert!(!msgs.iter().any(|m| matches!(m, Msg::Lost(_))));
-    }
-
-    #[test]
-    #[ignore = "needs Windows 11 / 10 build with process loopback"]
-    fn wasapi_process_loopback_opens_for_own_pid() {
-        let (msgs, opened) = collect(
-            SourceKind::Process {
-                pid: std::process::id(),
-            },
-            1,
-        );
-        opened.expect("open process loopback");
         assert!(!msgs.iter().any(|m| matches!(m, Msg::Lost(_))));
     }
 }

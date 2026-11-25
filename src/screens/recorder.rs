@@ -997,10 +997,7 @@ fn source_badge(
     match status {
         None => (tr("Ready"), theme.on_surface_variant),
         Some(SourceStatus::Active) => (tr("Connected"), theme.success_text),
-        Some(SourceStatus::AllSystemFallback) => (tr("All system audio"), theme.warning_text),
-        Some(SourceStatus::WaitingForApp) => {
-            (tr("Waiting for the meeting app"), theme.warning_text)
-        }
+        Some(SourceStatus::AllSystem) => (tr("All system audio"), theme.success_text),
         Some(SourceStatus::DeviceLost) => (tr("Device lost"), theme.error_text),
         Some(SourceStatus::Disabled) => (tr("Off"), theme.on_surface_variant),
         Some(SourceStatus::Failed(_)) => (tr("Could not start"), theme.error_text),
@@ -1085,6 +1082,13 @@ fn draw_audio_sources_card(
                         choice.select_system(i);
                     }
                 });
+                ui.label(
+                    RichText::new(tr(
+                        "Records everything that plays on this device. Pick the one you hear the meeting on.",
+                    ))
+                    .size(11.0)
+                    .color(theme.on_surface_variant),
+                );
 
                 audio_level_meter(
                     ui,
@@ -1763,14 +1767,21 @@ mod tests {
         let mut s = RecorderScreen::default();
         s.apply_event(Event::SourceStatus {
             source: Source::System,
-            status: SourceStatus::AllSystemFallback,
+            status: SourceStatus::AllSystem,
         });
         s.apply_event(Event::SourceStatus {
             source: Source::Mic,
             status: SourceStatus::Active,
         });
-        assert_eq!(s.sys_status, Some(SourceStatus::AllSystemFallback));
+        assert_eq!(s.sys_status, Some(SourceStatus::AllSystem));
         assert_eq!(s.mic_status, Some(SourceStatus::Active));
+    }
+
+    #[test]
+    fn recording_the_whole_system_is_shown_as_normal_not_as_a_warning() {
+        let theme = ThemeColors::DARK;
+        let (_, colour) = source_badge(&theme, true, Some(&SourceStatus::AllSystem), false);
+        assert_eq!(colour, theme.success_text);
     }
 
     #[test]
@@ -1876,7 +1887,6 @@ mod tests {
             "Ready",
             "Off",
             "All system audio",
-            "Waiting for the meeting app",
             "Device lost",
             "Could not start",
             "Recording problem",

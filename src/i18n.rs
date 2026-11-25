@@ -241,7 +241,7 @@ const THAI: &[(&str, &str)] = &[
     ("Ready", "พร้อม"),
     ("Off", "ปิด"),
     ("All system audio", "เสียงทั้งระบบ"),
-    ("Waiting for the meeting app", "รอแอปประชุม"),
+    ("Records everything that plays on this device. Pick the one you hear the meeting on.", "อัดทุกเสียงที่ออกอุปกรณ์นี้ เลือกตัวที่คุณใช้ฟังประชุม"),
     ("Device lost", "อุปกรณ์หลุด"),
     ("Could not start", "เริ่มไม่ได้"),
     ("Recording problem", "การบันทึกมีปัญหา"),

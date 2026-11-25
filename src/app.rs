@@ -2810,6 +2810,15 @@ mod tests {
     }
 
     #[test]
+    fn the_recorder_page_says_what_the_system_track_records() {
+        let base = library_dir("app-system-hint");
+        let text = painted_text(&mut live_app(&base), Screen::Recorder);
+        let hint = "Records everything that plays on this device. \
+                    Pick the one you hear the meeting on.";
+        assert!(shows_label(&text, hint), "{text}");
+    }
+
+    #[test]
     fn the_render_check_does_see_sample_data_in_the_preview() {
         let text = painted_text(&mut AppState::default(), Screen::Recorder);
         assert!(text.contains("q4-architecture"), "{text}");
