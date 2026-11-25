@@ -488,6 +488,9 @@ impl Worker {
         let Some(t) = self.session.as_mut().and_then(|s| s.track_mut(source)) else {
             return;
         };
+        if t.stream.as_ref().is_some_and(|s| !s.failed()) {
+            return; // the report of a stream that this one has replaced
+        }
         if let Some(stream) = t.stream.take() {
             stream.stop();
         }
@@ -1089,6 +1092,29 @@ mod tests {
             status(Source::System, SourceStatus::AllSystem),
         );
         assert_eq!(r.fake.live(Source::System), vec![output(Some("speaker"))]);
+    }
+
+    #[test]
+    fn a_loss_reported_by_a_replaced_stream_leaves_the_new_one_running() {
+        let mut r = Rig::new();
+        r.fake.unplug("speaker");
+        let mut req = r.req(true, false);
+        req.system_device = Some("speaker".into());
+        r.h.send(Command::Start(req));
+        r.wait_state(SessionState::Recording);
+        r.fake.plug_in("speaker");
+        r.wait(
+            "the chosen output",
+            status(Source::System, SourceStatus::AllSystem),
+        );
+        // The stream on the default failed while the chosen one was being opened.
+        assert!(r.fake.report_old_loss(Source::System));
+        std::thread::sleep(Duration::from_millis(300)); // six retry intervals
+        assert_eq!(
+            r.fake.opened(),
+            vec![output(None), output(Some("speaker"))],
+            "the new stream was not stopped and opened again"
+        );
     }
 
     #[test]

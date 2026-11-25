@@ -244,6 +244,7 @@ _None._
 - [x] Task: A missing output device is stood in for by the Windows default (branch `fix/known-limits`)
   - Built: at the start and after a loss, a chosen output device that cannot be opened is replaced by the Windows default ("Using Windows default"), and tried again every 2 s until it takes over. Also fixes a saved device that was not connected making the system source fail to start while the list showed "Windows default". The microphone is never replaced.
   - Verification Evidence: with a fake sound card that can unplug one device, the move-and-return test and the missing-at-start test failed first, as did the badge test; `cargo test --locked` 408 passed, 6 ignored; the capture tests passed 15 runs in a row.
+  - Follow-up: moving back stops a stream that still works, and a loss report names only the source. A report from the replaced stream, failing while the new one was being opened, would have stopped the new one. A stream now says whether it is the one that failed. The test with the fake sound card failed first; `cargo test --locked` 420 passed, 6 ignored; the capture tests passed 15 runs in a row. The matching flag in the WASAPI capture thread is checked by the compiler and by reading only.
   - Not run: real hardware (no device was disconnected, nothing was recorded). The open acceptance task above lists the check.
 
 - [x] Task: Thai marks are drawn on top of each other (branch `fix/known-limits`)

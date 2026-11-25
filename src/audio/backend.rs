@@ -36,6 +36,9 @@ pub enum Msg {
 
 pub trait Stream: Send {
     fn stop(self: Box<Self>);
+    /// Whether this stream has sent `Msg::Lost`; true no later than the message arrives. The
+    /// message names only the source, so this tells it from one of a stream already replaced.
+    fn failed(&self) -> bool;
 }
 
 pub trait Backend: Send + Sync + 'static {
@@ -73,6 +76,8 @@ mod fake {
         txs: HashMap<usize, (u64, Sender<Msg>)>,
         /// Device IDs that cannot be opened at the moment.
         unplugged: Vec<String>,
+        /// Generations of the streams that have reported a loss.
+        failed: Vec<u64>,
         /// Streams that are open, by generation.
         live: Vec<(u64, SourceKind)>,
         next_gen: u64,
@@ -135,10 +140,22 @@ mod fake {
             }
         }
         /// Reports the stream of `source` as lost and closes it.
+        /// A loss report of a stream that is no longer the current one of `source`: it names
+        /// only the source, as every report does. The current stream stays healthy.
+        pub(crate) fn report_old_loss(&self, source: Source) -> bool {
+            let st = self.state.lock().unwrap();
+            match st.txs.get(&slot(source)) {
+                Some((_, tx)) => tx.send(Msg::Lost(source)).is_ok(),
+                None => false,
+            }
+        }
         pub(crate) fn lose(&self, source: Source) -> bool {
             let mut st = self.state.lock().unwrap();
             match st.txs.remove(&slot(source)) {
-                Some((_, tx)) => tx.send(Msg::Lost(source)).is_ok(),
+                Some((generation, tx)) => {
+                    st.failed.push(generation);
+                    tx.send(Msg::Lost(source)).is_ok()
+                }
                 None => false,
             }
         }
@@ -151,6 +168,10 @@ mod fake {
     }
 
     impl Stream for FakeStream {
+        fn failed(&self) -> bool {
+            self.state.lock().unwrap().failed.contains(&self.generation)
+        }
+
         fn stop(self: Box<Self>) {
             let mut st = self.state.lock().unwrap();
             st.live.retain(|(g, _)| *g != self.generation);

@@ -132,11 +132,18 @@ impl Default for WasapiBackend {
 
 struct WasapiStream {
     stop: Arc<AtomicBool>,
+    /// Set by the capture thread before it reports the stream as lost.
+    failed: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Stream for WasapiStream {
     fn stop(self: Box<Self>) {} // Drop does the work
+
+    fn failed(&self) -> bool {
+        // Sending and receiving the report orders this after the store.
+        self.failed.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for WasapiStream {
@@ -159,12 +166,21 @@ impl Backend for WasapiBackend {
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread_stop = stop.clone();
+        let failed = Arc::new(AtomicBool::new(false));
+        let thread_failed = failed.clone();
         let join = std::thread::Builder::new()
             .name("wasapi-capture".into())
-            .spawn(move || capture_thread(kind, origin, sample_rate, tx, thread_stop, ready_tx))
+            .spawn(move || {
+                let flags = Flags {
+                    stop: thread_stop,
+                    failed: thread_failed,
+                };
+                capture_thread(kind, origin, sample_rate, tx, flags, ready_tx)
+            })
             .map_err(|e| e.to_string())?;
         let stream = WasapiStream {
             stop,
+            failed,
             join: Some(join),
         };
         match ready_rx.recv_timeout(START_TIMEOUT) {
@@ -258,12 +274,18 @@ fn open_stream(kind: &SourceKind, rate: u32) -> Result<Opened, String> {
     Err(last)
 }
 
+/// What a capture thread shares with its stream.
+struct Flags {
+    stop: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+}
+
 fn capture_thread(
     kind: SourceKind,
     origin: Instant,
     rate: u32,
     tx: Sender<Msg>,
-    stop: Arc<AtomicBool>,
+    flags: Flags,
     ready: Sender<Result<(), String>>,
 ) {
     let _ = initialize_mta();
@@ -273,7 +295,7 @@ fn capture_thread(
         }
         Ok(opened) => {
             let _ = ready.send(Ok(()));
-            run_capture(kind.source(), origin, rate, &tx, &stop, &opened);
+            run_capture(kind.source(), origin, rate, &tx, &flags, &opened);
             let _ = opened.client.stop_stream();
         }
     }
@@ -286,16 +308,17 @@ fn run_capture(
     origin: Instant,
     rate: u32,
     tx: &Sender<Msg>,
-    stop: &AtomicBool,
+    flags: &Flags,
     o: &Opened,
 ) {
     let frame_bytes = o.channels * 4;
     let mut timeline = Timeline::new(origin, rate);
     let mut buf = Vec::new();
     let lost = || {
+        flags.failed.store(true, Ordering::Relaxed);
         let _ = tx.send(Msg::Lost(source));
     };
-    while !stop.load(Ordering::Relaxed) {
+    while !flags.stop.load(Ordering::Relaxed) {
         let _ = o.event.wait_for_event(WAIT_MS); // a timeout just means no packet yet
         loop {
             let frames = match o.capture.get_next_packet_size() {
