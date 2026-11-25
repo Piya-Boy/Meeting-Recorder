@@ -115,6 +115,8 @@ pub enum Modal {
     },
     /// The window was asked to close while a recording runs.
     QuitWhileRecording,
+    /// The licence texts of everything the program ships.
+    Licenses,
 }
 
 // ─── Application state ───────────────────────────────────────────────────────
@@ -1301,7 +1303,12 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
             theme,
             &mut state.theme_mode,
         ),
-        Screen::SettingsAdvanced => draw_settings_advanced(ui, &mut state.settings_advanced, theme),
+        Screen::SettingsAdvanced => {
+            draw_settings_advanced(ui, &mut state.settings_advanced, theme);
+            if std::mem::take(&mut state.settings_advanced.licenses_requested) {
+                state.open_modal = Some(Modal::Licenses);
+            }
+        }
         _ => {}
     }
 }
@@ -2950,9 +2957,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Clicks the painted button labelled `key` in the open modal; returns every command the
-    /// app sent while doing so.
-    fn click_in_modal(a: &mut AppState, key: &str) -> Vec<egui::ViewportCommand> {
+    /// Clicks the painted button labelled `key`, on the current screen or in the open modal;
+    /// returns every command the app sent while doing so.
+    fn click_button(a: &mut AppState, key: &str) -> Vec<egui::ViewportCommand> {
         fn find(shape: &egui::Shape, wanted: &[&str]) -> Option<egui::Pos2> {
             match shape {
                 egui::Shape::Text(t) if wanted.contains(&t.galley.job.text.as_str()) => {
@@ -2974,7 +2981,10 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let out = ctx.run(input, |ctx| crate::modals::draw(ctx, a, &theme));
+            let out = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+                crate::modals::draw(ctx, a, &theme);
+            });
             if let Some(v) = out.viewport_output.get(&egui::ViewportId::ROOT) {
                 sent.extend(v.commands.clone());
             }
@@ -3006,7 +3016,7 @@ mod tests {
         a.recorder.state = RecorderState::Recording;
 
         a.open_modal = Some(Modal::QuitWhileRecording);
-        let sent = click_in_modal(&mut a, "Keep recording");
+        let sent = click_button(&mut a, "Keep recording");
         assert!(!sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
         assert!(a.open_modal.is_none());
         assert!(
@@ -3014,7 +3024,7 @@ mod tests {
             "the next close asks again"
         );
 
-        let sent = click_in_modal(&mut a, "Stop and quit");
+        let sent = click_button(&mut a, "Stop and quit");
         assert!(sent.contains(&egui::ViewportCommand::Close), "{sent:?}");
         assert!(!answer_to_close(&mut a).contains(&egui::ViewportCommand::CancelClose));
         let _ = std::fs::remove_dir_all(&base);
@@ -3166,6 +3176,22 @@ mod tests {
             }
         }
         assert!(found.is_empty(), "{found:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_licences_button_shows_the_licence_texts() {
+        let base = library_dir("app-licences");
+        let mut a = live_app(&base);
+        a.current_screen = Screen::SettingsAdvanced;
+        click_button(&mut a, "Open-source licenses");
+        assert!(
+            matches!(a.open_modal, Some(Modal::Licenses)),
+            "{:?}",
+            a.open_modal
+        );
+        let text = painted_text(&mut a, Screen::SettingsAdvanced);
+        assert!(text.contains("# Third-party notices"), "{text}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

@@ -30,7 +30,11 @@ pub fn draw(ctx: &Context, state: &mut AppState, theme: &ThemeColors) {
         .backdrop_color(theme.scrim)
         .frame(frame)
         .show(ctx, |ui| {
-            ui.set_width(448.0);
+            ui.set_width(match modal {
+                // The licence texts are laid out for `LICENCE_COLUMNS` monospace characters.
+                Modal::Licenses => (ctx.screen_rect().width() - 96.0).min(680.0),
+                _ => 448.0,
+            });
             ui.spacing_mut().item_spacing.y = 16.0;
             match &modal {
                 Modal::Help => help_body(ui, theme, &mut close),
@@ -39,6 +43,7 @@ pub fn draw(ctx: &Context, state: &mut AppState, theme: &ThemeColors) {
                     delete_body(ui, theme, state, *id, name, dir.clone(), &mut close)
                 }
                 Modal::QuitWhileRecording => quit_body(ui, theme, state, &mut close),
+                Modal::Licenses => licences_body(ui, theme, &mut close),
             }
         });
 
@@ -120,7 +125,7 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
     ui.add(
         egui::Label::new(
             RichText::new(tr(
-                "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
+                "Licences of the libraries, fonts and speech model: Settings > Advanced > Open-source licenses.",
             ))
             .size(12.0)
             .color(theme.on_surface_variant),
@@ -128,6 +133,81 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
         .wrap(),
     );
     ui.add_space(4.0);
+    footer(ui, |ui| {
+        if custom_button(ui, theme, None, "Close", ButtonVariant::Secondary).clicked() {
+            *close = true;
+        }
+    });
+}
+
+/// The widest line of the licence viewer, in characters.
+const LICENCE_COLUMNS: usize = 90;
+
+/// Breaks `line` at spaces so that no piece is longer than `max` characters. A word that is
+/// longer than that is cut.
+fn wrap_line(line: &str, max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    // `limit` is the byte offset of the first character that does not fit.
+    while let Some((limit, next)) = rest.char_indices().nth(max) {
+        let head = &rest[..limit];
+        let cut = if next == ' ' {
+            limit
+        } else {
+            head.rfind(' ')
+                .filter(|&i| !head[..i].trim().is_empty())
+                .unwrap_or(limit)
+        };
+        out.push(rest[..cut].trim_end().to_owned());
+        rest = rest[cut..].trim_start_matches(' ');
+    }
+    if !rest.is_empty() || out.is_empty() {
+        out.push(rest.to_owned());
+    }
+    out
+}
+
+/// The notices and licence texts, built into the program, as viewer lines.
+fn licence_lines() -> &'static [String] {
+    static LINES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LINES.get_or_init(|| {
+        [
+            include_str!("../THIRD_PARTY_NOTICES.md"),
+            include_str!("../THIRD_PARTY_LICENSES.txt"),
+        ]
+        .iter()
+        .flat_map(|text| text.lines().chain(std::iter::once("")))
+        .flat_map(|line| wrap_line(&line.replace('\t', "    "), LICENCE_COLUMNS))
+        .collect()
+    })
+}
+
+fn licences_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
+    heading(ui, theme, tr("Open-source licenses"));
+    let font = egui::FontId::monospace(11.0);
+    let row_height = ui.fonts(|f| f.row_height(&font));
+    let height = (ui.ctx().screen_rect().height() - 240.0).clamp(200.0, 520.0);
+    let lines = licence_lines();
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // Only the visible rows are laid out: there are thousands of them.
+        egui::ScrollArea::vertical()
+            .id_salt("licences")
+            .max_height(height)
+            .auto_shrink(false)
+            .show_rows(ui, row_height, lines.len(), |ui, visible| {
+                for line in &lines[visible] {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(line)
+                                .font(font.clone())
+                                .color(theme.on_surface),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                }
+            });
+    });
     footer(ui, |ui| {
         if custom_button(ui, theme, None, "Close", ButtonVariant::Secondary).clicked() {
             *close = true;
@@ -221,4 +301,44 @@ fn delete_body(
             *close = true;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_lines_are_wrapped_for_the_viewer() {
+        assert_eq!(wrap_line("", 10), vec![""]);
+        assert_eq!(wrap_line("short", 10), vec!["short"]);
+        assert_eq!(wrap_line("  indented", 10), vec!["  indented"]);
+        assert_eq!(wrap_line("aaaa bbbb cccc", 10), vec!["aaaa bbbb", "cccc"]);
+        // A word longer than the line is cut, between characters and never inside one.
+        assert_eq!(wrap_line("abcdefghijkl", 5), vec!["abcde", "fghij", "kl"]);
+        assert_eq!(wrap_line("©©©©©©", 4), vec!["©©©©", "©©"]);
+    }
+
+    #[test]
+    fn the_viewer_holds_every_licence_that_ships() {
+        let lines = licence_lines();
+        let all = lines.join("\n");
+        for wanted in [
+            "# Third-party notices",
+            "PoodPim",
+            "OpenMDW",
+            "Font: Noto Sans Thai (SIL Open Font License 1.1)",
+            "ONNX Runtime 1.31.0 (MIT)",
+            "- egui 0.31.1",
+            "Emil Ernerfeldt",
+            "- windows-sys",
+        ] {
+            assert!(all.contains(wanted), "{wanted} is missing");
+        }
+        assert!(
+            !all.contains("<copyright holders>"),
+            "a licence still has the template line"
+        );
+        let widest = lines.iter().map(|l| l.chars().count()).max();
+        assert!(widest <= Some(LICENCE_COLUMNS), "{widest:?}");
+    }
 }

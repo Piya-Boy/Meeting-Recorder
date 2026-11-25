@@ -63,14 +63,6 @@ pub fn thai_of(s: &str) -> Option<&'static str> {
     THAI.iter().find(|(k, _)| *k == s).map(|(_, v)| *v)
 }
 
-/// Toast text for an action whose backend is not connected yet.
-pub fn not_wired(what: &str) -> String {
-    match lang() {
-        Lang::En => format!("{what} is not wired up yet (UI preview)"),
-        Lang::Th => format!("{} ยังไม่เชื่อมต่อ (ตัวอย่าง UI)", tr(what)),
-    }
-}
-
 /// Toast text for an export format whose backend is not connected yet.
 pub fn export_not_wired(fmt: &str) -> String {
     match lang() {
@@ -352,7 +344,7 @@ const THAI: &[(&str, &str)] = &[
     ("Loading recordings...", "กำลังโหลดรายการบันทึก..."),
     ("Stop the recording before deleting.", "หยุดการบันทึกก่อนจึงจะลบได้"),
     ("This recording is being transcribed.", "รายการบันทึกนี้กำลังถอดเสียงอยู่"),
-    ("Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.", "สัญญาอนุญาตของไลบรารีและโมเดลเสียง: ไฟล์ THIRD_PARTY_NOTICES.md ในโฟลเดอร์โปรเจกต์"),
+    ("Licences of the libraries, fonts and speech model: Settings > Advanced > Open-source licenses.", "ไลเซนส์ของไลบรารี ฟอนต์ และโมเดลเสียง ดูได้ที่ ตั้งค่า > ขั้นสูง > ไลเซนส์โอเพนซอร์ส"),
 ];
 
 #[cfg(test)]
@@ -433,7 +425,7 @@ mod tests {
             "Loading recordings...",
             "Stop the recording before deleting.",
             "This recording is being transcribed.",
-            "Licences of the libraries and of the speech model: THIRD_PARTY_NOTICES.md in the project folder.",
+            "Licences of the libraries, fonts and speech model: Settings > Advanced > Open-source licenses.",
         ] {
             assert!(has_thai(key), "missing Thai for {key:?}");
         }
@@ -454,7 +446,6 @@ mod tests {
             tr("Speakers (Realtek(R) Audio)"),
             "Speakers (Realtek(R) Audio)"
         );
-        assert!(not_wired("The licenses viewer").contains("ยังไม่เชื่อมต่อ"));
         assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);
