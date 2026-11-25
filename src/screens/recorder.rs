@@ -1535,6 +1535,9 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                         egui::Label::new(
                                             RichText::new(&seg.text)
                                                 .size(15.0)
+                                                .line_height(crate::thai_marks::line_height(
+                                                    &seg.text, 15.0,
+                                                ))
                                                 .color(theme.on_surface),
                                         )
                                         .wrap(),
@@ -1575,6 +1578,9 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                             egui::Label::new(
                                                 RichText::new(&p.text)
                                                     .size(15.0)
+                                                    .line_height(crate::thai_marks::line_height(
+                                                        &p.text, 15.0,
+                                                    ))
                                                     .italics()
                                                     .color(theme.on_surface_variant),
                                             )
@@ -1622,6 +1628,12 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                                                 egui::Label::new(
                                                     RichText::new(&screen.partial_text)
                                                         .size(15.0)
+                                                        .line_height(
+                                                            crate::thai_marks::line_height(
+                                                                &screen.partial_text,
+                                                                15.0,
+                                                            ),
+                                                        )
                                                         .italics()
                                                         .color(theme.on_surface_variant),
                                                 )

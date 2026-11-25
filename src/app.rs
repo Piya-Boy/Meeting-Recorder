@@ -2803,6 +2803,98 @@ mod tests {
 
     /// Every piece of text the screen paints, one per line, on a canvas tall enough that
     /// nothing below the fold is skipped.
+    /// The laid-out texts a screen hands to the renderer, in a window 1100 points wide.
+    fn painted_galleys(a: &mut AppState, screen: Screen) -> Vec<std::sync::Arc<egui::Galley>> {
+        fn collect(shape: &egui::Shape, out: &mut Vec<std::sync::Arc<egui::Galley>>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.clone()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+        a.current_screen = screen;
+        let theme = a.theme(None);
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100.0, 2400.0),
+            )),
+            ..Default::default()
+        };
+        let mut galleys = Vec::new();
+        for _ in 0..2 {
+            let frame = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+            });
+            galleys.clear();
+            frame
+                .shapes
+                .iter()
+                .for_each(|c| collect(&c.shape, &mut galleys));
+        }
+        galleys
+    }
+
+    /// A wrapped paragraph of egui's own line height has no room to raise the marks of its later
+    /// lines, so every view of a transcript has to ask for more.
+    #[test]
+    fn thai_transcript_paragraphs_have_room_for_raised_marks() {
+        use crate::asr::transcript::{Line, Track};
+        let long = "ที่นี่มีหลายส่วนที่ต้องตัดสินใจกัน ".repeat(8);
+        let check = |a: &mut AppState, screen: Screen, view: &str, expected: usize| {
+            let galleys = painted_galleys(a, screen);
+            let paragraphs: Vec<_> = galleys
+                .iter()
+                .filter(|g| g.job.text.starts_with(&long))
+                .collect();
+            assert!(
+                paragraphs.len() >= expected,
+                "{view}: only {} paragraphs were painted",
+                paragraphs.len()
+            );
+            for g in paragraphs {
+                assert!(g.rows.len() > 1, "{view}: the paragraph did not wrap");
+                for row in &g.rows {
+                    assert!(
+                        row.rect.height() >= 15.0 * 1.45,
+                        "{view}: a line is only {} high",
+                        row.rect.height()
+                    );
+                }
+            }
+        };
+
+        let mut a = AppState::default();
+        for article in &mut a.transcript_detail.articles {
+            article.text = long.clone();
+        }
+        check(&mut a, Screen::TranscriptDetail, "the editor", 3);
+        a.transcript_detail.live = true;
+        check(&mut a, Screen::TranscriptDetail, "a saved transcript", 3);
+
+        for segment in &mut a.recorder.transcript_segments {
+            segment.text = long.clone();
+        }
+        a.recorder.partial_text = format!("{long} partial");
+        assert!(!a.recorder.live);
+        check(&mut a, Screen::Recorder, "the preview", 2);
+
+        let dir = std::path::PathBuf::from("C:\\rec\\a");
+        assert!(a.recorder.live_started(dir.clone()));
+        let line = |start_ms| Line {
+            track: Track::Mic,
+            start_ms,
+            end_ms: start_ms + 1_000,
+            text: long.clone(),
+        };
+        a.recorder.live_line(&dir, &line(1_000));
+        a.recorder
+            .live_partial(&dir, Track::Mic, Some(&line(2_000)));
+        check(&mut a, Screen::Recorder, "live transcription", 2);
+    }
+
     fn painted_text(a: &mut AppState, screen: Screen) -> String {
         fn collect(shape: &egui::Shape, out: &mut String) {
             match shape {

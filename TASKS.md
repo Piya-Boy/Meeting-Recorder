@@ -246,9 +246,12 @@ _None._
   - Verification Evidence: with a fake sound card that can unplug one device, the move-and-return test and the missing-at-start test failed first, as did the badge test; `cargo test --locked` 408 passed, 6 ignored; the capture tests passed 15 runs in a row.
   - Not run: real hardware (no device was disconnected, nothing was recorded). The open acceptance task above lists the check.
 
-- [ ] Task: Thai marks are drawn on top of each other
+- [x] Task: Thai marks are drawn on top of each other (branch `fix/known-limits`)
   - egui 0.31.1 does no text shaping: a tone mark above an upper vowel is drawn over it (in "ทั่วไป" the tone mark covers the vowel). Seen on the real exe in the interface; transcript text is drawn the same way. `v0.0.1` has it. `design.md` asks for tone marks to be tested.
   - Verification: stacked marks are readable in the interface and in a transcript, on screenshots of the real exe.
+  - Built: `src/thai_marks.rs` moves the drawing of such a mark up just before each frame is rendered (the text is unchanged). The first screenshots showed that a mark raised in the second line of a paragraph read as a sara u of the first line (measured: it reached 2 px into the line above at 15 pt). So later lines are only raised when they have room, and the transcript views (editor, saved transcript, live and preview lines on the Recorder) give Thai paragraphs a line height of 1.5 font sizes. A one-line input clips just above its text; there the clip follows the raised mark.
+  - Verification Evidence: tests failed first for the raised mark, the line without room, the transcript views and the clipped input; `cargo test --locked` 419 passed, 6 ignored. Real exe with preview flags and `--lang=th` (nothing recorded): before and after screenshots of Settings > General show the mai ek of "ทั่วไป" merged with the vowel before and apart from it after; the transcript editor, the Recorder preview and the delete dialog were screenshotted after the change.
+  - Left: outside the transcripts, wrapped Thai keeps the old drawing from the second line on; marks over ป, ฝ and ฟ are not moved sideways. Not screenshotted: a one-line input with typed Thai, light theme, display scaling other than 100%.
 
 - [x] Task: Settings that are not saved (branch `fix/known-limits`)
   - Built: `settings.ini` also holds `audio.system_enabled`, `audio.mic_enabled`, `audio.sample_rate_index`, `asr.partial` and `asr.chunk_window_index`. A file without these keys, or with bad values, keeps the old defaults.

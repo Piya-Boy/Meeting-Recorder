@@ -155,3 +155,9 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Checked with screenshots of the real exe in Thai (General, Audio, Transcription, Appearance, Advanced, licence viewer, close question, light and System theme) and in English (General, Audio, close question). Not screenshotted: the System theme on a light Windows.
 - Known: egui draws a Thai tone mark over an upper vowel (no text shaping).
 
+## 2026-11-26 - Known limits of v0.0.1
+
+- The source switches, sample rate and live-transcript settings are kept after a restart.
+- Recorder: when the chosen output device cannot be opened, the system source shows "Using Windows default" in the warning colour.
+- Thai: tone marks stacked on an upper vowel are drawn above it. Thai transcript paragraphs have a line height of 1.5 font sizes. This replaces the "Known" line of the section above, except for wrapped text outside the transcripts.
+- Checked with screenshots of the real exe in Thai (preview flags): General, transcript editor, Recorder preview, delete dialog. The "Using Windows default" badge was not screenshotted.

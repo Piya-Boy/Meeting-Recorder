@@ -217,6 +217,8 @@ pub fn configure_fonts(ctx: &egui::Context) {
     );
 
     ctx.set_fonts(fonts);
+    // egui does no text shaping, so Thai also needs its stacked marks moved apart.
+    crate::thai_marks::install(ctx);
 }
 
 /// Medium-weight proportional family (button and label text).

@@ -384,3 +384,12 @@ _Add decisions below._
 - Alternatives: Stay on the default until the next recording (after a Bluetooth speaker reconnects, Windows and the meeting app go back to it and the track would be silent again); ask the user during the recording; do the same for the microphone.
 - Consequences: Everything played on the stand-in device is recorded. A meeting app set to a particular speaker may send its sound somewhere other than the Windows default; the SYS meter is still the check. Not covered: with "Windows default" chosen, or while standing in, a change of the Windows default that leaves the old device connected is not followed, because nothing reports a loss. Covered by tests with a fake sound card; not tried with real hardware, so how Windows reports a disconnected Bluetooth device to a loopback stream is unverified.
 - References: `src/audio/worker.rs`, `src/screens/recorder.rs`
+
+### 2026-11-26 - Stacked Thai marks are moved after layout
+
+- Status: Accepted (the owner asked for the fix; the choices below were made while the owner was away)
+- Context: egui 0.31.1 does no text shaping, so a tone mark over an upper vowel is drawn on top of it.
+- Decision: Just before a frame is rendered, move the four vertices of each such mark up until its box meets the box under it. Leave the text as it is. Raise a later line of a text only when its line height is at least 1.45 font sizes, and give Thai transcript paragraphs 1.5.
+- Alternatives: Replace marks with raised private-use characters (the bundled font has no standard ones, and copied or searched text would change); shape text with another engine (a new text path for the whole interface); give all text a taller line (every screen would change its layout); raise every line (at egui's line height a raised mark reads as a sara u of the line above).
+- Consequences: One place covers panels, windows, menus and dialogs. It depends on how epaint 0.31.1 orders the vertices of a row, so the tests must be run when egui is upgraded. Wrapped Thai outside the transcripts keeps the old drawing after its first line. Transcript lines are about a quarter taller. No sideways placement for tall consonants.
+- References: `src/thai_marks.rs`, `src/screens/transcript_detail.rs`, `src/screens/recorder.rs`

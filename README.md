@@ -73,6 +73,8 @@ Get the zip from [Releases](https://github.com/Piya-Boy/Meeting-Recorder/release
   - A source switched off in **Settings > Audio** is still recorded. Set the switches on the **Recorder** page before you press Record, and again after each restart: they are not saved.
   - With Teams or Zoom open, even in the background, the system track can be silent, also for a meeting held in that app. Quit them completely (from the tray too), press Record, check that **System Audio** says "All system audio", and only then open the app and join. The **SYS** meter must move while others speak.
   - Closing the window ends a recording without asking. "Minimize to system tray" and several other settings do nothing.
+  - If the output device you chose under **System Audio** is not connected, the system sound is not recorded: choose a connected device before you press Record, and watch the **SYS** meter. This comes from the code and was not tried with hardware.
+  - Thai tone marks above an upper vowel are drawn on top of it.
   - The zip lacks the licence texts of the libraries and fonts.
 
 The program includes other people's work: see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and `THIRD_PARTY_LICENSES.txt`. The second file is generated; after a dependency change run `python .github/scripts/third_party_licenses.py` (needs `cargo-about` 0.9.3: `cargo install cargo-about --version 0.9.3 --locked --features cli`).

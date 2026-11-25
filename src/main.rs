@@ -11,6 +11,7 @@ mod playback;
 mod screens;
 mod settings_store;
 mod shell;
+mod thai_marks;
 mod theme;
 mod toast;
 mod update;
