@@ -1,16 +1,13 @@
 use egui::{RichText, Ui};
 
-use super::{card, field, page, path_field, row_styled, section_title};
-use crate::components::button::{compact_button, custom_button, ButtonVariant};
+use super::{card, page, section_title};
+use crate::components::button::{compact_button, ButtonVariant};
 use crate::i18n::tr;
 use crate::theme::ThemeColors;
 use crate::toast;
 use crate::update::UpdateState;
 
 pub struct SettingsAdvancedScreen {
-    pub log_dir: String,
-    pub model_cache_info: String,
-    pub perf_info: String,
     /// Mirrors the app's update check (synced by the app each frame).
     pub update: UpdateState,
     /// Set by the "Check for updates" button; taken by the app.
@@ -22,9 +19,6 @@ pub struct SettingsAdvancedScreen {
 impl Default for SettingsAdvancedScreen {
     fn default() -> Self {
         Self {
-            log_dir: "C:\\Users\\Nattapong\\AppData\\Local\\MeetingRecorder\\logs".to_owned(),
-            model_cache_info: "642.0 MB · OpenThai ASR ONNX weights".to_owned(),
-            perf_info: "UI: 60 FPS (egui) · WASAPI buffer: 10 ms · Memory: 312 MB".to_owned(),
             update: UpdateState::Idle,
             check_requested: false,
             open_requested: false,
@@ -56,67 +50,8 @@ pub fn draw_settings_advanced(
         ui,
         theme,
         "Advanced",
-        "Diagnostics, log files, model cache, and runtime performance metrics.",
+        "Version, updates and open-source licences.",
         |ui| {
-            card(ui, theme, |ui| {
-                field(ui, theme, "Log directory", |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        let w = (ui.available_width() - 100.0 - 8.0).max(120.0);
-                        path_field(ui, theme, &mut screen.log_dir, w);
-                        if custom_button(ui, theme, None, "Open folder", ButtonVariant::Secondary)
-                            .clicked()
-                        {
-                            not_wired(ui, "Opening the log folder");
-                        }
-                    });
-                });
-                row_styled(
-                    ui,
-                    theme,
-                    "Model cache",
-                    Some(&screen.model_cache_info),
-                    true,
-                    None,
-                    130.0,
-                    |ui| {
-                        if custom_button(
-                            ui,
-                            theme,
-                            None,
-                            "Verify checksum",
-                            ButtonVariant::Secondary,
-                        )
-                        .clicked()
-                        {
-                            not_wired(ui, "Checksum verification");
-                        }
-                    },
-                );
-                row_styled(
-                    ui,
-                    theme,
-                    "Performance information",
-                    Some(&screen.perf_info),
-                    true,
-                    None,
-                    150.0,
-                    |ui| {
-                        if custom_button(
-                            ui,
-                            theme,
-                            None,
-                            "Export diagnostics",
-                            ButtonVariant::Secondary,
-                        )
-                        .clicked()
-                        {
-                            not_wired(ui, "Diagnostics export");
-                        }
-                    },
-                );
-            });
-
             section_title(ui, theme, "About");
             card(ui, theme, |ui| {
                 ui.spacing_mut().item_spacing.y = 16.0;
@@ -210,7 +145,7 @@ pub fn draw_settings_advanced(
                     ("UI Framework", "Rust + egui / eframe"),
                     ("ASR Engine", "OpenThai ASR"),
                     ("Audio Backend", "Windows WASAPI"),
-                    ("Storage", "SQLite + ONNX Runtime"),
+                    ("Storage", "WAV + JSON files"),
                 ];
                 egui::Grid::new("about_specs")
                     .num_columns(2)

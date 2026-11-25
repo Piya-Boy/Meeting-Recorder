@@ -57,6 +57,12 @@ pub fn has_thai(s: &str) -> bool {
     THAI.iter().any(|(k, _)| *k == s)
 }
 
+/// The Thai entry for `s`, for tests that match painted text in either language.
+#[cfg(test)]
+pub fn thai_of(s: &str) -> Option<&'static str> {
+    THAI.iter().find(|(k, _)| *k == s).map(|(_, v)| *v)
+}
+
 /// Toast text for an action whose backend is not connected yet.
 pub fn not_wired(what: &str) -> String {
     match lang() {
@@ -98,12 +104,9 @@ const THAI: &[(&str, &str)] = &[
     ("Audio only", "เสียงอย่างเดียว"),
     ("Audio sources", "แหล่งเสียง"),
     ("Auto-scroll", "เลื่อนอัตโนมัติ"),
-    ("Automatic saving", "บันทึกอัตโนมัติ"),
     ("Blue", "น้ำเงิน"),
-    ("Browse", "เลือก"),
     ("Cancel", "ยกเลิก"),
     ("Channel configuration", "การตั้งค่าช่องสัญญาณ"),
-    ("Clear cache", "ล้างแคช"),
     ("Click any paragraph below to edit text inline. Changes auto-save to SQLite.", "คลิกย่อหน้าใดก็ได้เพื่อแก้ไขข้อความ การเปลี่ยนแปลงจะบันทึกลง SQLite อัตโนมัติ"),
     ("Click any paragraph below to edit text inline. Changes auto-save to SQLite.", "คลิกย่อหน้าใดก็ได้เพื่อแก้ไขข้อความ การเปลี่ยนแปลงจะบันทึกลง SQLite อัตโนมัติ"),
     ("Close", "ปิด"),
@@ -123,8 +126,6 @@ const THAI: &[(&str, &str)] = &[
     ("Delete recording", "ลบการบันทึก"),
     ("Delete recording?", "ลบการบันทึกนี้หรือไม่?"),
     ("Destination", "ปลายทาง"),
-    ("Diagnostics export", "การส่งออกข้อมูลวินิจฉัย"),
-    ("Diagnostics, log files, model cache, and runtime performance metrics.", "ข้อมูลวินิจฉัย ไฟล์บันทึก แคชโมเดล และตัวชี้วัดประสิทธิภาพ"),
     ("Disconnected", "ไม่ได้เชื่อมต่อ"),
     ("Duration", "ความยาว"),
     ("Enable Microphone recording", "เปิดการบันทึกไมโครโฟน"),
@@ -133,13 +134,10 @@ const THAI: &[(&str, &str)] = &[
     ("Error · Device lost", "ผิดพลาด · อุปกรณ์หาย"),
     ("Execution backend (subject to model compatibility).", "ตัวประมวลผล (ขึ้นกับความเข้ากันได้ของโมเดล)"),
     ("Expand sidebar", "ขยายแถบด้านข้าง"),
-    ("Export diagnostics", "ส่งออกข้อมูลวินิจฉัย"),
     ("Export JSON", "ส่งออก JSON"),
     ("Export SRT", "ส่งออก SRT"),
     ("Export TXT", "ส่งออก TXT"),
     ("File picker is not wired up yet (UI preview)", "ตัวเลือกไฟล์ยังไม่เชื่อมต่อ (ตัวอย่าง UI)"),
-    ("Flush audio buffers and transcript segments to disk every 5 seconds.", "เขียนบัฟเฟอร์เสียงและข้อความถอดเสียงลงดิสก์ทุก 5 วินาที"),
-    ("Folder picker is not wired up yet (UI preview)", "ตัวเลือกโฟลเดอร์ยังไม่เชื่อมต่อ (ตัวอย่าง UI)"),
     ("Font scaling", "ขนาดตัวอักษร"),
     ("Future feature", "ฟีเจอร์ในอนาคต"),
     ("General", "ทั่วไป"),
@@ -161,14 +159,11 @@ const THAI: &[(&str, &str)] = &[
     ("Light theme", "ธีมสว่าง"),
     ("Live transcript", "ถอดเสียงสด"),
     ("Local-first Thai speech recognition model.", "โมเดลรู้จำเสียงพูดภาษาไทยที่ทำงานในเครื่อง"),
-    ("Log directory", "โฟลเดอร์บันทึก log"),
-    ("Manage local folders for dual-track WAV recordings, transcripts, SQLite database, and temporary cache.", "จัดการโฟลเดอร์สำหรับไฟล์ WAV สองแทร็ก ข้อความถอดเสียง ฐานข้อมูล SQLite และแคชชั่วคราว"),
     ("Maximize", "ขยายเต็มจอ"),
     ("Microphone", "ไมโครโฟน"),
     ("Microphone input stream lost. Reconnect device and click Resume.", "สัญญาณไมโครโฟนขาดหาย เชื่อมต่ออุปกรณ์ใหม่แล้วกดเล่นต่อ"),
     ("Minimize", "ย่อหน้าต่าง"),
     ("Minimize to system tray", "ย่อลงถาดระบบ"),
-    ("Model cache", "แคชโมเดล"),
     ("Model path", "ตำแหน่งโมเดล"),
     ("No recordings match your search.", "ไม่พบการบันทึกที่ตรงกับคำค้นหา"),
     ("No recordings yet", "ยังไม่มีการบันทึก"),
@@ -177,9 +172,7 @@ const THAI: &[(&str, &str)] = &[
     ("Open folder", "เปิดโฟลเดอร์"),
     ("Open transcript", "เปิดข้อความถอดเสียง"),
     ("Open-source licenses", "ไลเซนส์โอเพนซอร์ส"),
-    ("Opening the log folder", "การเปิดโฟลเดอร์ log"),
     ("OpenThai ASR", "OpenThai ASR"),
-    ("Optimize DB", "ปรับแต่ง DB"),
     ("Partial", "บางส่วน"),
     ("Partial transcription", "ถอดเสียงบางส่วน"),
     ("Pause", "พัก"),
@@ -187,7 +180,6 @@ const THAI: &[(&str, &str)] = &[
     ("Paused", "หยุดชั่วคราว"),
     ("Paused · 00:14:32", "หยุดชั่วคราว · 00:14:32"),
     ("Pending", "รอดำเนินการ"),
-    ("Performance information", "ข้อมูลประสิทธิภาพ"),
     ("Preview", "ตัวอย่าง"),
     ("Preview empty state", "ดูสถานะว่างเปล่า"),
     ("Primary interactive highlight across buttons, toggles, and active navigation.", "สีเน้นหลักของปุ่ม สวิตช์ และเมนูที่เลือกอยู่"),
@@ -228,12 +220,10 @@ const THAI: &[(&str, &str)] = &[
     ("Stereo mixed", "สเตอริโอรวม"),
     ("Stop", "หยุด"),
     ("Storage", "พื้นที่จัดเก็บ"),
-    ("Storage & SQLite", "พื้นที่จัดเก็บและ SQLite"),
     ("Streaming chunk window", "ช่วงเวลาสตรีมต่อชิ้น"),
     ("Switch Light / Dark theme", "สลับธีมสว่าง / มืด"),
     ("System Audio", "เสียงระบบ"),
     ("System theme", "ธีมระบบ"),
-    ("Temporary cache", "แคชชั่วคราว"),
     ("Test microphone", "ทดสอบไมโครโฟน"),
     ("Test system audio", "ทดสอบเสียงระบบ"),
     ("The licenses viewer", "ตัวแสดงไลเซนส์"),
@@ -244,14 +234,11 @@ const THAI: &[(&str, &str)] = &[
     ("Transcribed", "ถอดเสียงแล้ว"),
     ("Transcript copied to clipboard", "คัดลอกข้อความถอดเสียงแล้ว"),
     ("Transcript Detail", "รายละเอียดข้อความถอดเสียง"),
-    ("Transcript directory", "โฟลเดอร์เก็บข้อความถอดเสียง"),
     ("Transcript title", "ชื่อข้อความถอดเสียง"),
     ("Transcription", "ถอดเสียง"),
     ("Transcription (OpenThai ASR)", "ถอดเสียง (OpenThai ASR)"),
     ("Transcripts", "ข้อความถอดเสียง"),
     ("UI Framework", "เฟรมเวิร์ก UI"),
-    ("Verify checksum", "ตรวจสอบ checksum"),
-    ("Checksum verification", "การตรวจสอบ checksum"),
     ("Version", "เวอร์ชัน"),
     ("Check for updates", "ตรวจหาเวอร์ชันใหม่"),
     ("Asks GitHub once a day whether a newer version exists. No recording or personal data is sent.", "ถาม GitHub วันละครั้งว่ามีเวอร์ชันใหม่ไหม ไม่ส่งไฟล์บันทึกหรือข้อมูลส่วนตัวไปด้วย"),
@@ -285,10 +272,7 @@ const THAI: &[(&str, &str)] = &[
     ("ASR engine", "เอนจินถอดเสียง"),
     ("Dark theme", "ธีมมืด"),
     ("Default", "ค่าเริ่มต้น"),
-    ("Database optimize is not wired up yet (UI preview)", "การปรับแต่งฐานข้อมูลยังไม่เชื่อมต่อ (ตัวอย่าง UI)"),
-    ("Cache clearing is not wired up yet (UI preview)", "การล้างแคชยังไม่เชื่อมต่อ (ตัวอย่าง UI)"),
     ("Meeting date", "วันที่ประชุม"),
-    ("SQLite database", "ฐานข้อมูล SQLite"),
     ("Show recordings list", "แสดงรายการบันทึก"),
     ("ONNX Runtime (CPU)", "ONNX Runtime (CPU)"),
     ("Thai (TH)", "ไทย (TH)"),
@@ -314,7 +298,6 @@ const THAI: &[(&str, &str)] = &[
     ("Engine unavailable", "เอนจินใช้งานไม่ได้"),
     ("Transcription engine unavailable. Audio is still recorded; transcribe it later from Recordings.", "เอนจินถอดเสียงใช้งานไม่ได้ ระบบยังบันทึกเสียงอยู่ สามารถถอดเสียงภายหลังจากหน้าการบันทึก"),
     ("48,000 Hz matches Windows WASAPI shared mode and resamples cleanly for OpenThai ASR.", "48,000 Hz ตรงกับโหมดแชร์ของ Windows WASAPI และแปลงอัตราสุ่มเป็น OpenThai ASR ได้เรียบร้อย"),
-    ("128.4 MB used · Safe to clear when idle", "ใช้ไป 128.4 MB · ล้างได้อย่างปลอดภัยเมื่อไม่ได้ใช้งาน"),
     ("Missing", "ไม่มี"),
     ("Downloading", "กำลังดาวน์โหลด"),
     ("Download model", "ดาวน์โหลดโมเดล"),
@@ -362,6 +345,9 @@ const THAI: &[(&str, &str)] = &[
     ("Could not play the recording.", "เล่นไฟล์บันทึกไม่ได้"),
     ("Thai", "ไทย"),
     ("Thai + English", "ไทย + อังกฤษ"),
+    ("Where recordings and transcripts are saved.", "ตำแหน่งที่เก็บการบันทึกและข้อความถอดเสียง"),
+    ("Each recording has its own folder with the audio tracks (WAV) and, once transcribed, the transcript files.", "การบันทึกแต่ละครั้งมีโฟลเดอร์ของตัวเอง เก็บไฟล์เสียง (WAV) และไฟล์ข้อความเมื่อถอดเสียงแล้ว"),
+    ("Version, updates and open-source licences.", "เวอร์ชัน การอัปเดต และสัญญาอนุญาตโอเพนซอร์ส"),
     ("Thai writes every word in Thai letters; Thai + English writes English words in Latin letters.", "ไทย: เขียนทุกคำเป็นอักษรไทย ส่วนไทย + อังกฤษ: เขียนคำภาษาอังกฤษเป็นอักษรละติน"),
     ("Word fixes", "แก้คำอัตโนมัติ"),
     ("One fix per line: what the transcript says = what it should say. Separate several wrong forms with commas. Applies to transcripts made from now on.", "บรรทัดละหนึ่งคู่: คำที่ถอดได้ = คำที่ถูก ใส่คำผิดหลายแบบได้โดยคั่นด้วยจุลภาค ใช้กับข้อความถอดเสียงที่ทำหลังจากนี้"),
@@ -479,10 +465,21 @@ mod tests {
             tr("Speakers (Realtek(R) Audio)"),
             "Speakers (Realtek(R) Audio)"
         );
-        assert!(not_wired("Checksum verification").contains("ยังไม่เชื่อมต่อ"));
+        assert!(not_wired("The licenses viewer").contains("ยังไม่เชื่อมต่อ"));
         assert_eq!(tr("Windows default"), "ค่าเริ่มต้นของ Windows");
 
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn storage_and_about_texts_have_thai() {
+        for key in [
+            "Where recordings and transcripts are saved.",
+            "Each recording has its own folder with the audio tracks (WAV) and, once transcribed, the transcript files.",
+            "Version, updates and open-source licences.",
+        ] {
+            assert!(has_thai(key), "missing Thai for {key:?}");
+        }
     }
 
     #[test]

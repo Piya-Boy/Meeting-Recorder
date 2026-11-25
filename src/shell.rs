@@ -366,8 +366,9 @@ pub fn draw_topbar(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
                 }
             }
 
-            // Recorder state switcher (segmented control) — Recorder screen only
-            if state.current_screen == Screen::Recorder {
+            // Demo control: pick the recorder's state by hand (preview only; in the real app
+            // the capture worker owns the state)
+            if state.current_screen == Screen::Recorder && !state.recorder.live {
                 egui::Frame::NONE
                     .fill(theme.background)
                     .stroke(egui::Stroke::new(1.0, theme.outline))
