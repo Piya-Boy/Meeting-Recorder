@@ -6,6 +6,7 @@ use crate::components::button::{block_button, custom_button, ButtonVariant};
 use crate::components::toggle::toggle_switch;
 use crate::theme::ThemeColors;
 
+use crate::asr::engine::Language;
 use crate::asr::transcript::{format_clock, Line, Track, Transcript};
 use crate::audio::session::{Command, Event, SessionState, Source, SourceStatus, StartRequest};
 use crate::audio::worker::AudioHandle;
@@ -107,7 +108,21 @@ pub enum AsrRequest {
 }
 
 /// Placeholder folder of the preview; replaced by a real one when the worker is connected.
-pub const MOCK_DESTINATION: &str = "C:\\Users\\Nattapong\\Documents\\MeetingRecorder\\Recordings";
+pub const SAMPLE_DESTINATION: &str = "C:\\Users\\you\\Documents\\MeetingRecorder\\Recordings";
+/// The preview's made-up recording name.
+const SAMPLE_FILE_NAME: &str = "2026-11-23_q4-architecture-sync";
+
+/// `Documents\MeetingRecorder\Recordings` in the user's profile folder; under the temp folder
+/// when there is no profile (the same fallback as the model folder).
+pub fn destination_under(profile: Option<std::ffi::OsString>) -> String {
+    profile
+        .map(|home| PathBuf::from(home).join("Documents"))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("MeetingRecorder")
+        .join("Recordings")
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// Level shown for a source that is not capturing.
 const LEVEL_FLOOR_DB: f32 = -90.0;
@@ -127,6 +142,8 @@ pub struct RecorderScreen {
     pub mic_level: f32,
     pub file_name: String,
     pub destination: String,
+    /// The transcription language chosen in Settings (copied in each frame).
+    pub language: Language,
     pub transcript_search: String,
     pub auto_scroll: bool,
     /// The capture worker; `None` in preview mode (dev flags, tests), where the controls
@@ -395,6 +412,10 @@ impl RecorderScreen {
             self.live = true;
             self.transcript_segments.clear();
             self.partial_text.clear();
+            // An empty name is saved as "recording".
+            if self.file_name == SAMPLE_FILE_NAME {
+                self.file_name.clear();
+            }
         }
     }
 
@@ -630,8 +651,9 @@ impl Default for RecorderScreen {
             mic_enabled: true,
             sys_audio_level: -14.0,
             mic_level: -19.0,
-            file_name: "2026-11-23_q4-architecture-sync".to_owned(),
-            destination: MOCK_DESTINATION.to_owned(),
+            file_name: SAMPLE_FILE_NAME.to_owned(),
+            destination: SAMPLE_DESTINATION.to_owned(),
+            language: Language::default(),
             transcript_search: String::new(),
             auto_scroll: true,
             audio: None,
@@ -1140,6 +1162,10 @@ fn draw_file_storage_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut Recorde
                         ui.add_sized(
                             [ui.available_width(), 20.0],
                             egui::TextEdit::singleline(&mut screen.file_name)
+                                // The folder name used when the field is left empty.
+                                .hint_text(
+                                    RichText::new("recording").color(theme.on_surface_variant),
+                                )
                                 .font(egui::FontId::monospace(12.0))
                                 .text_color(theme.on_surface)
                                 .frame(false),
@@ -1156,13 +1182,15 @@ fn draw_file_storage_card(ui: &mut Ui, theme: &ThemeColors, screen: &mut Recorde
                             .size(11.0)
                             .color(theme.on_surface_variant),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!("184.2 GB {}", tr("free")))
-                                .font(egui::FontId::monospace(12.0))
-                                .color(theme.on_surface_variant),
-                        );
-                    });
+                    if !screen.live {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("184.2 GB {}", tr("free")))
+                                    .font(egui::FontId::monospace(12.0))
+                                    .color(theme.on_surface_variant),
+                            );
+                        });
+                    }
                 });
 
                 egui::Frame::NONE
@@ -1254,7 +1282,14 @@ fn draw_right_panel(ui: &mut Ui, theme: &ThemeColors, screen: &mut RecorderScree
                     ui,
                     theme.brand_blue,
                     theme.link_text,
-                    &format!("{} {}", egui_phosphor::regular::TRANSLATE, tr("Thai (TH)")),
+                    &format!(
+                        "{} {}",
+                        egui_phosphor::regular::TRANSLATE,
+                        match screen.language {
+                            Language::Thai => tr("Thai (TH)"),
+                            Language::ThaiEnglish => tr("Thai + English"),
+                        }
+                    ),
                 );
             });
 
@@ -2189,5 +2224,27 @@ mod tests {
         assert!(s.live_partials().is_empty());
         assert!(s.live_started(dir.clone()));
         assert!(s.live_partials().is_empty(), "a new run starts clean");
+    }
+
+    #[test]
+    fn going_live_drops_the_sample_file_name_but_keeps_a_typed_one() {
+        let mut s = RecorderScreen::default();
+        s.go_live();
+        assert_eq!(s.file_name, "");
+        s.file_name = "standup".to_owned();
+        s.go_live();
+        assert_eq!(s.file_name, "standup");
+    }
+
+    #[test]
+    fn recordings_go_to_the_users_own_documents() {
+        assert_eq!(
+            destination_under(Some(r"C:\Users\someone".into())),
+            r"C:\Users\someone\Documents\MeetingRecorder\Recordings"
+        );
+        // No profile folder: still a real place on this computer, never a made-up one.
+        let fallback = destination_under(None);
+        assert!(fallback.starts_with(&*std::env::temp_dir().to_string_lossy()));
+        assert!(fallback.ends_with(r"MeetingRecorder\Recordings"));
     }
 }

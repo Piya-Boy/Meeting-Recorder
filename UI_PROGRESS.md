@@ -136,3 +136,11 @@ Dev flags for review: `--screen=<name> --theme=light|dark --state=idle|recording
 - Settings > Advanced > About: the version line comes from `Cargo.toml`; a row below it holds "Check for updates", "Open download page" and a status line. The first try put these buttons in the header row and cut the version label, so they moved.
 - Sidebar footer: "Update available: vN.N.N" in the accent colour above the version when a newer version was found; the About modal and the footer show the version from `Cargo.toml`. English and Thai strings.
 - Checked with screenshots of the real exe in English (dark theme): General, Advanced (newer version found, and up to date) and the Recorder with the toast and the sidebar link. Not screenshotted: Thai, light theme, the collapsed sidebar.
+
+## 2026-11-25 - The real app no longer shows design sample data
+
+- Settings > Storage: one read-only field, the recordings folder, and a line about what each recording folder holds. The transcript folder, automatic saving, database, cache and Browse rows are gone: none of them existed.
+- Settings > Advanced: only the About card. The log folder, model cache and performance rows are gone.
+- Recorder: no free-space figure and no state switcher outside the preview; the empty recording name shows "recording" as a hint; the language pill follows Settings > Transcription.
+- Where this differs from the Stitch design, the app follows what it can really do.
+

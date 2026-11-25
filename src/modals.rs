@@ -109,7 +109,7 @@ fn about_body(ui: &mut Ui, theme: &ThemeColors, close: &mut bool) {
         egui::Label::new(
             RichText::new(
                 "Local-first dual-track audio capture and real-time Thai transcription powered by \
-                 Rust, egui/eframe, Windows WASAPI, OpenThai ASR, ONNX Runtime, and SQLite.",
+                 Rust, egui/eframe, Windows WASAPI, OpenThai ASR and ONNX Runtime.",
             )
             .size(13.0)
             .color(theme.on_surface_variant),

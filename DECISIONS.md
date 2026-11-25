@@ -297,3 +297,22 @@ _Add decisions below._
 - Alternatives: Floating stable with `-D warnings` (breaks on every new lint); floating stable without `-D warnings` (no lint gate); fixing the 72 sites for 1.100 now (unrelated churn in audio code that cannot be checked here without installing 1.100).
 - Consequences: Builds are repeatable. Nothing raises the pin by itself (Dependabot does not manage it), so it can go stale; `TASKS.md` lists the bump. Local builds also use 1.96.0.
 - References: `rust-toolchain.toml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+
+### 2026-11-25 - The licence is PolyForm Noncommercial 1.0.0
+
+- Status: Accepted
+- Context: The committed `LICENSE` and `Cargo.toml` said Apache-2.0 while the owner's uncommitted change said PolyForm Noncommercial. The release zip carries `LICENSE`, so the first published Release fixes the terms of every copy downloaded from it.
+- Decision: Commit the owner's change: `LICENSE`, `license = "PolyForm-Noncommercial-1.0.0"` and the licence section of `README.md`, before the first Release is published.
+- Alternatives: Keep Apache-2.0 (allows commercial use).
+- Consequences: Commits that were already public under Apache-2.0 stay available under it; the new terms apply from this change on. The project is not open source in the OSI sense. The open gate on the model licence and the "Powered by OpenThai ASR" badge (2026-11-24) is not settled by this.
+- References: `LICENSE`, `Cargo.toml`, `README.md`, `THIRD_PARTY_NOTICES.md`
+
+### 2026-11-25 - The Visual C++ Redistributable is a stated requirement
+
+- Status: Accepted
+- Context: The release exe imports `MSVCP140.dll`, `MSVCP140_1.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`. A static C runtime would remove the requirement.
+- Decision: State the requirement, with Microsoft's download link, in `README.md` and the release notes.
+- Alternatives: `-C target-feature=+crt-static`: tried, the link fails (`LNK1120: 69 unresolved externals`, `__imp_*` symbols from `libort_sys`), because the prebuilt ONNX Runtime is built against the dynamic runtime. Building ONNX Runtime ourselves, or shipping the runtime DLLs beside the exe (check Microsoft's redistribution terms first), were not tried.
+- Consequences: A computer without the redistributable cannot start the app until it is installed.
+- References: `.github/release-notes.md`, `README.md`
+

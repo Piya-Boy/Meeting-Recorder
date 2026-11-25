@@ -14,7 +14,7 @@ use crate::screens::{
         audio::{draw_settings_audio, AudioChoice, SettingsAudioScreen},
         category_rail as draw_settings_category_rail,
         general::{draw_settings_general, SettingsGeneralScreen},
-        storage::{draw_settings_storage, SettingsStorageScreen},
+        storage::draw_settings_storage,
         transcription::{
             draw_settings_transcription, threads_index, ModelAction, SettingsTranscriptionScreen,
         },
@@ -65,7 +65,7 @@ impl Screen {
             Screen::SettingsGeneral => Some(tr("General & Shortcuts")),
             Screen::SettingsAudio => Some(tr("Audio (Windows WASAPI)")),
             Screen::SettingsTranscription => Some(tr("Transcription (OpenThai ASR)")),
-            Screen::SettingsStorage => Some(tr("Storage & SQLite")),
+            Screen::SettingsStorage => Some(tr("Storage")),
             Screen::SettingsAppearance => Some(tr("Appearance & Theme")),
             Screen::SettingsAdvanced => Some(tr("Advanced & About")),
             _ => None,
@@ -131,7 +131,6 @@ pub struct AppState {
     pub settings_general: SettingsGeneralScreen,
     pub settings_audio: SettingsAudioScreen,
     pub settings_transcription: SettingsTranscriptionScreen,
-    pub settings_storage: SettingsStorageScreen,
     pub settings_appearance: SettingsAppearanceScreen,
     pub settings_advanced: SettingsAdvancedScreen,
     /// Devices Windows reports and the ones picked (Recorder and Settings > Audio share it).
@@ -199,7 +198,6 @@ impl Default for AppState {
             settings_general: SettingsGeneralScreen::default(),
             settings_audio: SettingsAudioScreen::default(),
             settings_transcription: SettingsTranscriptionScreen::default(),
-            settings_storage: SettingsStorageScreen::default(),
             settings_appearance: SettingsAppearanceScreen::default(),
             settings_advanced: SettingsAdvancedScreen::default(),
             audio_choice: AudioChoice::default(),
@@ -685,16 +683,10 @@ impl AppState {
         self.recorder.audio = Some(handle);
         self.recorder.go_live();
         self.enable_library();
-        // The mock folder belongs to someone else's profile; record under this user's.
-        if self.recorder.destination == crate::screens::recorder::MOCK_DESTINATION {
-            if let Some(home) = std::env::var_os("USERPROFILE") {
-                self.recorder.destination = std::path::PathBuf::from(home)
-                    .join("Documents")
-                    .join("MeetingRecorder")
-                    .join("Recordings")
-                    .to_string_lossy()
-                    .into_owned();
-            }
+        // The preview's folder does not exist; record under this user's profile.
+        if self.recorder.destination == crate::screens::recorder::SAMPLE_DESTINATION {
+            self.recorder.destination =
+                crate::screens::recorder::destination_under(std::env::var_os("USERPROFILE"));
         }
     }
 
@@ -1228,6 +1220,7 @@ fn reveal_in_explorer(path: &std::path::Path) {
 fn draw_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors) {
     match state.current_screen {
         Screen::Recorder => {
+            state.recorder.language = state.settings_transcription.language();
             draw_recorder_screen(ui, theme, &mut state.recorder, &mut state.audio_choice);
         }
         Screen::Recordings => {
@@ -1272,7 +1265,7 @@ fn draw_settings_content(ui: &mut Ui, state: &mut AppState, theme: &ThemeColors)
         Screen::SettingsTranscription => {
             draw_settings_transcription(ui, &mut state.settings_transcription, theme)
         }
-        Screen::SettingsStorage => draw_settings_storage(ui, &mut state.settings_storage, theme),
+        Screen::SettingsStorage => draw_settings_storage(ui, &state.recorder.destination, theme),
         Screen::SettingsAppearance => draw_settings_appearance(
             ui,
             &mut state.settings_appearance,
@@ -2687,5 +2680,158 @@ mod tests {
         let p = a.snapshot();
         assert!(!p.update_check);
         assert_eq!(p.update_last_check, 1_764_000_000);
+    }
+
+    // ─── what the real app shows ─────────────────────────────────────────────────────────────
+
+    /// Values the design mock made up. None of them may reach a user of the real app.
+    const SAMPLE_DATA: [&str; 10] = [
+        "Nattapong",
+        "SQLite",
+        "184.2 GB",
+        "q4-architecture",
+        "642.0 MB",
+        "312 MB",
+        "128.4 MB",
+        "index.db",
+        "Latency: 210 ms",
+        "142 Thai words",
+    ];
+
+    const SCREENS: [Screen; 9] = [
+        Screen::Recorder,
+        Screen::Recordings,
+        Screen::Transcripts,
+        Screen::SettingsGeneral,
+        Screen::SettingsAudio,
+        Screen::SettingsTranscription,
+        Screen::SettingsStorage,
+        Screen::SettingsAppearance,
+        Screen::SettingsAdvanced,
+    ];
+
+    /// An app as `main` starts it, with a fake sound card and `base` as the recordings folder.
+    fn live_app(base: &std::path::Path) -> AppState {
+        let mut a = fake_app(base);
+        a.enable_audio(AudioHandle::spawn(
+            std::sync::Arc::new(crate::audio::backend::FakeBackend::new()),
+            crate::audio::worker::WorkerConfig::default(),
+        ));
+        a
+    }
+
+    /// Every piece of text the screen paints, one per line, on a canvas tall enough that
+    /// nothing below the fold is skipped.
+    fn painted_text(a: &mut AppState, screen: Screen) -> String {
+        fn collect(shape: &egui::Shape, out: &mut String) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    out.push_str(&t.galley.job.text);
+                    out.push('\n');
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+        a.current_screen = screen;
+        let theme = a.theme();
+        let ctx = egui::Context::default();
+        crate::theme::configure_fonts(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 2400.0),
+            )),
+            ..Default::default()
+        };
+        let mut text = String::new();
+        // The first frame only sizes some widgets; the second is what the user sees.
+        for _ in 0..2 {
+            let frame = ctx.run(input.clone(), |ctx| {
+                egui::TopBottomPanel::top("topbar")
+                    .show(ctx, |ui| shell::draw_topbar(ui, a, &theme));
+                egui::CentralPanel::default().show(ctx, |ui| draw_content(ui, a, &theme));
+                crate::modals::draw(ctx, a, &theme);
+            });
+            text.clear();
+            frame
+                .shapes
+                .iter()
+                .for_each(|c| collect(&c.shape, &mut text));
+        }
+        text
+    }
+
+    /// Whether a painted label ends with `key`, in either language: the UI language is global,
+    /// and another test may switch it while this one runs.
+    fn shows_label(text: &str, key: &str) -> bool {
+        let thai = crate::i18n::thai_of(key);
+        text.lines()
+            .any(|l| l.ends_with(key) || thai.is_some_and(|t| l.ends_with(t)))
+    }
+
+    #[test]
+    fn the_render_check_does_see_sample_data_in_the_preview() {
+        let text = painted_text(&mut AppState::default(), Screen::Recorder);
+        assert!(text.contains("q4-architecture"), "{text}");
+        assert!(shows_label(&text, "Processing"), "{text}");
+    }
+
+    #[test]
+    fn the_real_app_shows_no_sample_data() {
+        let base = library_dir("app-no-sample");
+        let mut a = live_app(&base);
+        let mut found = Vec::new();
+        for screen in SCREENS {
+            let text = painted_text(&mut a, screen);
+            assert!(!text.is_empty(), "{screen:?} painted nothing");
+            found.extend(
+                SAMPLE_DATA
+                    .iter()
+                    .filter(|s| text.contains(*s))
+                    .map(|s| format!("{screen:?}: {s}")),
+            );
+        }
+        a.open_modal = Some(Modal::About);
+        let about = painted_text(&mut a, Screen::SettingsAdvanced);
+        found.extend(
+            SAMPLE_DATA
+                .iter()
+                .filter(|s| about.contains(*s))
+                .map(|s| format!("About: {s}")),
+        );
+        assert!(found.is_empty(), "sample data on screen: {found:#?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_storage_page_shows_the_folder_recordings_go_to() {
+        let base = library_dir("app-storage-folder");
+        let mut a = live_app(&base);
+        let text = painted_text(&mut a, Screen::SettingsStorage);
+        assert!(text.contains(&a.recorder.destination), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_real_recorder_has_no_state_switcher() {
+        let base = library_dir("app-no-switcher");
+        let text = painted_text(&mut live_app(&base), Screen::Recorder);
+        assert!(!shows_label(&text, "Processing"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_language_pill_follows_the_setting() {
+        let base = library_dir("app-language-pill");
+        let mut a = live_app(&base);
+        a.settings_transcription.language_idx = 0;
+        let text = painted_text(&mut a, Screen::Recorder);
+        assert!(shows_label(&text, "Thai (TH)"), "{text}");
+        a.settings_transcription.language_idx = 1;
+        let text = painted_text(&mut a, Screen::Recorder);
+        assert!(shows_label(&text, "Thai + English"), "{text}");
+        assert!(!shows_label(&text, "Thai (TH)"), "{text}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
