@@ -58,6 +58,8 @@ jobs:
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText("dist/SHA256SUMS.txt", "$hash  $name.zip`n")
+          # The release job has no checkout, so the notes travel with the files.
+          Copy-Item .github/release-notes.md -Destination dist/release-notes.md
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -65,6 +67,7 @@ jobs:
           path: |
             dist/*.zip
             dist/SHA256SUMS.txt
+            dist/release-notes.md
           if-no-files-found: error
           retention-days: 14
 
@@ -89,4 +92,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS.txt             --repo "$GITHUB_REPOSITORY"             --title "Meeting Recorder $GITHUB_REF_NAME"             --generate-notes             --verify-tag             --draft
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Meeting Recorder $GITHUB_REF_NAME" \
+            --notes-file dist/release-notes.md \
+            --generate-notes \
+            --verify-tag \
+            --draft
